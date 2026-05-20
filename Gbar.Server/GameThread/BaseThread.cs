@@ -12,6 +12,7 @@ public abstract class BaseGameThread
 
     public int TicksPerSecond { get; set; } = 20;
     public bool IsRunning => _running;
+    public static bool DebugEnabled { get; set; } = true;
 
     protected BaseGameThread()
     {
@@ -38,6 +39,12 @@ public abstract class BaseGameThread
 
     public void Join() => _thread?.Join();
 
+    public static void WaitAll()
+    {
+        foreach (var t in _allThreads)
+            t.Join();
+    }
+
     // 默认的循环方法，子类可以重写它来实现不同的行为
     protected virtual void RunLoop()
     {
@@ -54,6 +61,14 @@ public abstract class BaseGameThread
             }
             Thread.Sleep(1);
         }
+    }
+
+    protected void Debug(string message)
+    {
+        if (!DebugEnabled) return;
+        var time = DateTime.Now.ToString("HH:mm:ss.fff");
+        var name = GetType().Name;
+        Console.WriteLine($"[{time}] [{name}] {message}");
     }
 
     protected virtual void Update() { }
