@@ -8,6 +8,9 @@ public class Server
     {
         Console.WriteLine("服务器正在启动...");
         var inputThread = new InputThread();
+        var archThread = new ArchThread();
+        var monitorThread = new MonitorThread();
+
         foreach (var thread in BaseGameThread.AllThreads)
         {
             thread.Start();
@@ -15,6 +18,5 @@ public class Server
 
         BaseGameThread.WaitAll();
         Console.WriteLine("服务器正在关闭...");
-        
     }
 }
