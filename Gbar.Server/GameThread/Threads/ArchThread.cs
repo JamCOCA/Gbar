@@ -47,7 +47,9 @@ public class ArchThread : BaseGameThread
             world.Create(
                 new Position(i * 10, 0, 0),
                 new Velocity(1, 0, 0),
-                new Health(100, 100)
+                new Health(100, 100),
+                new Mana(100, 100),
+                new State(EntityState.Idle)
             );
         }
 

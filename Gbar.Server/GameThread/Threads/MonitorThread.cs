@@ -9,7 +9,7 @@ public class MonitorThread : BaseGameThread
     bool MonitorEnabled;
     public MonitorThread()
     {
-        MonitorEnabled = true;
+        MonitorEnabled = false;
         TicksPerSecond = 1; // 每秒更新一次
     }
 
@@ -31,17 +31,12 @@ public class MonitorThread : BaseGameThread
         Debug($"当前实体数量: {world.Size}");
 
 
-        var query = new QueryDescription().WithAll<Health,Position,Velocity>();
-        var entitylist = new Entity[100];
-        world.GetEntities(in query,entitylist,0);
-        foreach (var entity in entitylist)
-        {
-            if (entity == Entity.Null) continue;
-            var health = world.Get<Health>(entity);
-            var position = world.Get<Position>(entity);
-            var velocity = world.Get<Velocity>(entity);
-            Debug($"实体 {entity}: 生命值={health.Current}");
-        }
+        // var query = new QueryDescription().WithAll<Health,Position,Velocity>();
+        // world.Query(in query,(ref Health health, ref Position position, ref Velocity velocity) =>
+        // {
+        //     Debug($"实体位置: {position}, 速度: {velocity}, 生命值: {health}");
+        // });
+
         // 这里可以添加监视逻辑，例如监控服务器状态、资源使用等
         Debug("监视线程正在运行...");
     }
