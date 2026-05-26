@@ -50,6 +50,7 @@ public abstract class BaseGameThread
     {
         long nextTick = _timer.ElapsedMilliseconds;
         long interval = 1000 / TicksPerSecond;
+        double lastTime = _timer.Elapsed.TotalSeconds;
 
         while (_running)
         {
@@ -57,7 +58,10 @@ public abstract class BaseGameThread
             if (now >= nextTick)
             {
                 nextTick += interval;
-                Update();
+                double currentTime = _timer.Elapsed.TotalSeconds;
+                float deltaTime = (float)(currentTime - lastTime);
+                lastTime = currentTime;
+                Update(deltaTime);
             }
             Thread.Sleep(1);
         }
@@ -71,7 +75,7 @@ public abstract class BaseGameThread
         Console.WriteLine($"[{time}] [{name}] {message}");
     }
 
-    protected virtual void Update() { }
+    protected virtual void Update(float deltaTime) { }
     protected virtual void OnStart() { }
     protected virtual void OnStop() { }
 }

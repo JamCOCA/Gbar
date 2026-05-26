@@ -15,8 +15,6 @@ public class ArchThread : BaseGameThread
     {
         EcsWorldManager.Initialize();
         Debug("Arch ECS 线程已启动");
-
-        SpawnTestEntities();
     }
 
     protected override void OnStop()
@@ -25,34 +23,10 @@ public class ArchThread : BaseGameThread
         Debug("Arch ECS 线程已停止");
     }
 
-    protected override void Update()
+    protected override void Update(float deltaTime)
     {
         var world = EcsWorldManager.World;
 
-        var moveQuery = new QueryDescription().WithAll<Position, Velocity>();
-        world.Query(in moveQuery, (Entity entity, ref Position pos, ref Velocity vel) =>
-        {
-            pos.X += vel.Dx;
-            pos.Y += vel.Dy;
-            pos.Z += vel.Dz;
-        });
-    }
-
-    private void SpawnTestEntities()
-    {
-        var world = EcsWorldManager.World;
-
-        for (int i = 0; i < 5; i++)
-        {
-            world.Create(
-                new Position(i * 10, 0, 0),
-                new Velocity(1, 0, 0),
-                new Health(100, 100),
-                new Mana(100, 100),
-                new State(EntityState.Idle)
-            );
-        }
-
-        Debug("已生成 5 个测试实体");
+    
     }
 }

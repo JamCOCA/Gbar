@@ -9,7 +9,7 @@ public class MonitorThread : BaseGameThread
     bool MonitorEnabled;
     public MonitorThread()
     {
-        MonitorEnabled = false;
+        MonitorEnabled = true;
         TicksPerSecond = 1; // 每秒更新一次
     }
 
@@ -24,20 +24,12 @@ public class MonitorThread : BaseGameThread
         
     }
 
-    protected override void Update()
+    protected override void Update(float deltaTime)
     {
         if (!MonitorEnabled) return;
         var world = EcsWorldManager.World;
         Debug($"当前实体数量: {world.Size}");
-
-
-        // var query = new QueryDescription().WithAll<Health,Position,Velocity>();
-        // world.Query(in query,(ref Health health, ref Position position, ref Velocity velocity) =>
-        // {
-        //     Debug($"实体位置: {position}, 速度: {velocity}, 生命值: {health}");
-        // });
-
-        // 这里可以添加监视逻辑，例如监控服务器状态、资源使用等
+        Debug($"tickers: {TicksPerSecond}, deltaTime: {deltaTime}");
         Debug("监视线程正在运行...");
     }
 }
