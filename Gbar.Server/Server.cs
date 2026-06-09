@@ -19,4 +19,9 @@ public class Server
         BaseGameThread.WaitAll();
         Console.WriteLine("服务器正在关闭...");
     }
+
+    public void StartEcs()
+    {
+        
+    }
 }
