@@ -1,6 +1,5 @@
-namespace Gbar.Core.Type;
+namespace Gbar.Core.Type.Math;
 
-// 有限int-用于血量和魔法等即时状态
 public readonly record struct BoundedInt(int Current, int Max)
 {
     public readonly float Ratio => Max > 0 ? (float)Current / Max : 0;

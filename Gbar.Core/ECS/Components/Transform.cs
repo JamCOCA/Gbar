@@ -1,4 +1,4 @@
-using Gbar.Core.Type;
+using Gbar.Core.Type.Math;
 namespace Gbar.Core.ECS.Components;
 
 

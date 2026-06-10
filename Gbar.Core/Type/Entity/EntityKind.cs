@@ -1,5 +1,5 @@
+namespace Gbar.Core.Type.Entity;
 
-namespace Gbar.Core.Type;
 public enum EntityKind : byte
 {
     Player,

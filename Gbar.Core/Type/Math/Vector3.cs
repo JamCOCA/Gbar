@@ -1,6 +1,5 @@
-namespace Gbar.Core.Type;
+namespace Gbar.Core.Type.Math;
 
-// 三维向量
 public struct Vector3
 {
     public float X { get; }

@@ -1,4 +1,4 @@
-using Gbar.Core.Type;
+using Gbar.Core.Type.Entity;
 
 
 namespace Gbar.Core.ECS.Components;

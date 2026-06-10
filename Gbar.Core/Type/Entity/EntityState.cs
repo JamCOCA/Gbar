@@ -1,4 +1,4 @@
-namespace Gbar.Core.Type;
+namespace Gbar.Core.Type.Entity;
 
 public enum EntityState
 {
