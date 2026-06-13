@@ -7,6 +7,7 @@ public class SystemGroup
 {
     private readonly List<ISystem> _systems = [];
     private readonly List<CommandBuffer> _commandBuffers = [];
+    private IGameContext? _context;
 
     public IReadOnlyList<ISystem> Systems => _systems;
     public List<CommandBuffer> CommandBuffers => _commandBuffers;
@@ -21,10 +22,11 @@ public class SystemGroup
 
     public void Clear() => _systems.Clear();
 
-    public void Start(World world)
+    public void Start(World world, IGameContext context)
     {
+        _context = context;
         foreach (var system in _systems)
-            system.Start(world);
+            system.Start(world, context);
     }
 
     public void Update(float deltaTime)

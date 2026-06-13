@@ -1,16 +1,20 @@
 using Arch.Core;
 using Gbar.Core.ECS;
 using Gbar.Core.ECS.Components;
+using Gbar.Core.Type.Input;
+using Gbar.Core.Messaging;
 
 namespace Gbar.Server.GameThread.Threads;
 
-public class ArchThread : BaseGameThread
+public class ArchThread : BaseGameThread, IGameContext
 {
-    public List<SystemGroup> SystemGroups;
-    public ArchThread()
+    public List<SystemGroup> SystemGroups { get; } = [];
+    public IMessageQueue<InputMessage> InputMessageQueue { get; }
+
+    public ArchThread(IMessageQueue<InputMessage> inputMessageQueue)
     {
+        InputMessageQueue = inputMessageQueue;
         TicksPerSecond = 60;
-        SystemGroups = [];
     }
 
     protected override void OnStart()
@@ -20,24 +24,38 @@ public class ArchThread : BaseGameThread
         var world = EcsWorldManager.World;
 
         // 注册系统组
-        // 1.输入系统组
-        SystemGroup InputSystemGroup = new();
-        // 2.逻辑系统组
-        SystemGroup LogicSystemGroup = new();
-        // 3.输出系统组
-        SystemGroup OutputSystemGroup = new();
+        SystemGroup inputSystemGroup = new();
+        SystemGroup logicSystemGroup = new();
+        SystemGroup outputSystemGroup = new();
+
+        // TODO: 向系统组中添加 ISystem
+
+        SystemGroups.Add(inputSystemGroup);
+        SystemGroups.Add(logicSystemGroup);
+        SystemGroups.Add(outputSystemGroup);
+
+        foreach (var group in SystemGroups)
+        {
+            group.Start(world, this);
+        }
     }
 
     protected override void OnStop()
     {
+        foreach (var group in SystemGroups)
+        {
+            group.Destroy();
+        }
+        SystemGroups.Clear();
         EcsWorldManager.Dispose();
         Debug("Arch ECS 线程已停止");
     }
 
     protected override void Update(float deltaTime)
     {
-        var world = EcsWorldManager.World;
-
-    
+        foreach (var group in SystemGroups)
+        {
+            group.Update(deltaTime);
+        }
     }
 }
