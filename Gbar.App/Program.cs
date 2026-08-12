@@ -1,6 +1,13 @@
 ﻿using Arch.Core;
+using Gbar.App.Logging;
 using Gbar.Core;
 using Gbar.Core.Components;
+using Gbar.Core.Logging;
+
+Log.AddSink(new ConsoleSink());
+Log.AddSink(new FileSink("logs"));
+Log.MinimumLevel = LogLevel.Debug;
+Log.Start();
 
 var server = new GameServer(tickRate: 20);
 server.RegisterSystems();   // 反射扫描所有 FixedSystem/UpdateSystem 子类并自动注册
@@ -23,10 +30,30 @@ Console.CancelKeyPress += (_, e) =>
     quit.TrySetResult();
 };
 
-Console.WriteLine("服务器已启动（20 tick/s），按回车或 Ctrl+C 停止...");
+Log.Info("服务器已启动（20 tick/s），按回车或 Ctrl+C 停止...");
+
+var statusTask = Task.Run(async () =>
+{
+    var lastTick = server.Tick;
+    var lastTime = DateTime.UtcNow;
+    while (!quit.Task.IsCompleted)
+    {
+        await Task.Delay(1000);
+        var now = DateTime.UtcNow;
+        var currentTick = server.Tick;
+        var tps = (currentTick - lastTick) / (now - lastTime).TotalSeconds;
+        Log.Info($"Tick速率: {tps:F1} tick/s | 总Tick: {currentTick}");
+        lastTick = currentTick;
+        lastTime = now;
+    }
+});
+
 await Task.WhenAny(quit.Task, Task.Run(Console.ReadLine));
+quit.TrySetResult();
+await statusTask;
 
 await server.StopAsync();
-Console.WriteLine($"共运行 {server.Tick} tick");
+Log.Info($"共运行 {server.Tick} tick");
 
 server.Dispose();
+Log.Shutdown();

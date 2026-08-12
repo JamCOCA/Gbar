@@ -3,6 +3,8 @@ using Arch.System;
 using Arch.System.SourceGenerator;
 using Gbar.Core.Components;
 
+using Gbar.Core.Logging;
+
 namespace Gbar.Core.Systems;
 
 /// <summary>
@@ -25,10 +27,5 @@ public sealed partial class MovementSystem : FixedSystem
         position.X += velocity.X * delta;
         position.Y += velocity.Y * delta;
 
-        // 结构性操作不直接执行，记录到 CommandBuffer，由 FixedUpdateSystemGroup 在步进后统一回放
-        if (Math.Abs(position.X) > Bound || Math.Abs(position.Y) > Bound)
-        {
-            Commands.Current.Destroy(in entity);
-        }
     }
 }
