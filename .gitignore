@@ -68,3 +68,19 @@ coverage*.info
 Thumbs.db
 Desktop.ini
 .DS_Store
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+dist/
+build/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+*/__pycache__
