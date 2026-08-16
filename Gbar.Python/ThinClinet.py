@@ -86,19 +86,26 @@ class ClientPacketHandler(IPacketHandler):
         pass
 
 
-def connect_and_handshake(client, handler, timeout=5.0):
+def connect_and_handshake(client, handler, timeout=5.0, retries=3):
     """连接服务器并等待握手完成（发送 Hello → 收到 Welcome）。
 
-    轮询等待是因为 UDP 建连耗时不定；超时返回 False。
+    轮询等待是因为 UDP 建连耗时不定；并发压测时连接请求可能丢包，
+    失败会重建 NetManager 重试，全部超时返回 False。
     """
-    client.Connect(HOST, PORT)
-    deadline = time.monotonic() + timeout
-    while not client.IsConnected and time.monotonic() < deadline:
-        time.sleep(0.1)
-    if not client.IsConnected:
+    for attempt in range(retries):
+        client.Connect(HOST, PORT)
+        deadline = time.monotonic() + timeout
+        while not client.IsConnected and time.monotonic() < deadline:
+            time.sleep(0.1)
+        if client.IsConnected:
+            break
+        print(f"[C] 第 {attempt + 1} 次连接超时，重试")
+        client.Stop()
+    else:
         print("[C] 连接失败，请先启动 ThinServer.py")
         return False
     client.SendHello()
+    deadline = time.monotonic() + timeout
     while handler.welcome is None and time.monotonic() < deadline:
         time.sleep(0.05)  # 等待服务器回 Welcome
     if handler.welcome is None:
@@ -107,13 +114,18 @@ def connect_and_handshake(client, handler, timeout=5.0):
     return True
 
 
-def run_loop(client, handler, duration=8.0):
-    """常态业务循环：快照由回调线程应用，主循环按固定间隔回执 Ack。"""
-    end_time = time.monotonic() + duration
-    while time.monotonic() < end_time:
-        # 已应用最新快照，向服务器回执（真实业务按固定间隔限频发送，这里每次循环发一次）
-        client.SendAck(handler.last_applied_tick)
-        time.sleep(0.2)
+def run_loop(client, handler):
+    """常态业务循环：快照由回调线程应用，主循环按固定间隔回执 Ack。
+
+    无限运行，Ctrl+C 退出；断线时退出循环交由上层断开。
+    """
+    try:
+        while client.IsConnected:
+            # 已应用最新快照，向服务器回执（真实业务按固定间隔限频发送，这里每次循环发一次）
+            client.SendAck(handler.last_applied_tick)
+            time.sleep(0.2)
+    except KeyboardInterrupt:
+        pass
 
 
 def main():

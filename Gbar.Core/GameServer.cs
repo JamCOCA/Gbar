@@ -37,6 +37,9 @@ public sealed class GameServer : IDisposable
     /// <summary>fixed 组（定步长），持有本组的命令缓冲 Hub。</summary>
     public FixedUpdateSystemGroup FixedSystems => _fixedSystems;
 
+    /// <summary>持久化提供方。设置后 <see cref="StopAsync"/> 停止循环后自动保存，<see cref="LoadAsync"/> 可在启动前手动加载。</summary>
+    public Persistence.IPersistenceProvider? Persistence { get; set; }
+
     /// <summary>每帧触发，参数为实际流逝时间（秒）。</summary>
     public event Action<float>? OnUpdate;
 
@@ -84,6 +87,13 @@ public sealed class GameServer : IDisposable
             Activator.CreateInstance(type, this);   // 构造函数内自动注册进对应组
     }
 
+    /// <summary>从持久化存储加载实体到 World。必须在 <see cref="Start"/> 之前调用（此时主循环未运行，直接写 World 是线程安全的）。</summary>
+    public Task LoadAsync(CancellationToken ct = default)
+    {
+        if (IsRunning) throw new InvalidOperationException("主循环运行中不能加载，请在 Start 之前调用。");
+        return Persistence?.LoadAsync(_world, ct) ?? Task.CompletedTask;
+    }
+
     /// <summary>启动后台主循环。重复调用无效。</summary>
     public void Start()
     {
@@ -92,7 +102,7 @@ public sealed class GameServer : IDisposable
         _loopTask = Task.Run(() => Loop(_cts.Token));
     }
 
-    /// <summary>停止主循环并等待其退出，随后释放令牌资源。</summary>
+    /// <summary>停止主循环并等待其退出，随后自动持久化并释放令牌资源。</summary>
     public async Task StopAsync()
     {
         if (_cts is null) return;
@@ -101,6 +111,10 @@ public sealed class GameServer : IDisposable
         _cts.Dispose();
         _cts = null;
         _loopTask = null;
+
+        // 循环已退出，无线程竞争，此时遍历 World 序列化是安全的
+        if (Persistence is not null)
+            await Persistence.SaveAsync(_world);
     }
 
     /// <summary>
