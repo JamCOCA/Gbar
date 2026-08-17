@@ -4,7 +4,6 @@ namespace Gbar.Net.Protocol;
 
 /// <summary>
 /// 单个实体的同步状态，Keyframe/Delta 包体的基本元素。
-/// 与 <c>Gbar.Core.Components</c> 的 Position/Velocity/NetworkId 一一对应，但独立定义：
 /// 协议层不引用 ECS 组件，保持 Core 与传输解耦。
 /// </summary>
 [MemoryPackable]

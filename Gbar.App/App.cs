@@ -23,8 +23,8 @@ public sealed class App : IDisposable
     /// <summary>初始化：配置日志、创建服务器、注册系统并从持久化存储恢复实体。</summary>
     public async Task InitAsync()
     {
-        Log.AddSink(new ConsoleSink());
-        Log.AddSink(new FileSink("logs"));
+        Log.AddSink(new LevelFilterSink(new ConsoleSink(), LogLevel.Warn)); // 控制台只显示 Warn 以上
+        Log.AddSink(new FileSink("logs"));                                  // 文件保留完整日志
         Log.MinimumLevel = LogLevel.Debug;
         Log.Start();
 
