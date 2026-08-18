@@ -2,7 +2,7 @@
 
 基于 [Arch](https://arch-ecs.gitbook.io/arch) ECS 框架的游戏服务器。核心设计：**查询内并行计算 + 结构变更延迟回放**。
 
-相关文档：[GbarTransform.md](GbarTransform.md)（坐标方案）、[GbarNet.md](GbarNet.md)（网络同步）、[arch-core.md](arch-core.md) / [arch-systems.md](arch-systems.md)（Arch 框架参考）
+相关文档：[GbarMotion.md](GbarMotion.md)（坐标/物理/运动方案）、[GbarNet.md](GbarNet.md)（网络同步）、[arch-core.md](arch-core.md) / [arch-systems.md](arch-systems.md)（Arch 框架参考）
 
 ## 目录结构
 
@@ -11,7 +11,10 @@ Gbar/
 ├── Gbar.Core/                        服务器核心库
 │   ├── GameServer.cs                 调度核心：持有 World、驱动主循环
 │   ├── CommandBufferHub.cs           CommandBuffer 持有包装（线程安全写入）
-│   ├── Components/                   组件定义（一组件一文件）
+│   ├── Components/                   组件定义（一组件一文件，按功能分二级目录）
+│   │   ├── Spatial/                  坐标域：Global/Local Position/Velocity + ParentRef
+│   │   ├── Physics/                  物理：Mass、Force（将改 Impulse）
+│   │   └── Identity/                 标识：NetworkId、PlayerTag
 │   ├── Maths/Fix.cs                  定点数换算工具（long，1:100）
 │   ├── SystemGroup/                  变步长/定步长两个系统组（各持有 Commands）
 │   └── Systems/

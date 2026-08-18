@@ -25,7 +25,7 @@
 public partial struct EntityState
 {
     public int NetId;               // 4 B
-    public int SpaceNetId;          // 4 B  所属空间（GbarTransform.md 坐标框架）
+    public int SpaceNetId;          // 4 B  所属空间（GbarMotion.md 坐标框架）
     public float PosX, PosY, PosZ;  // 12 B
     public float VelX, VelY, VelZ;  // 12 B
 }
@@ -58,7 +58,7 @@ C ── Bye ────→ S    按 PlayerTag 清理归属实体
 - 无 AOI 全量广播：服务器下行 5.4 Gbps 级，**不可行，AOI 是硬需求**
 - 有 AOI（每玩家可见 ~100 实体、10% 变化率）：服务器下行 ~55–90 Mbps，单玩家下行 ~7 KB/s，**可行**
 
-AOI 按 [GbarTransform.md](GbarTransform.md) 的分域索引实现，应提前到 MVP。
+AOI 按 [GbarMotion.md](GbarMotion.md) 的分域索引实现，应提前到 MVP。
 
 ## 后续扩展（先不实现）
 

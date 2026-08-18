@@ -1,4 +1,4 @@
-namespace Gbar.Core.Components;
+namespace Gbar.Core.Components.Physics;
 
 /// <summary>
 /// 质量，定点存储（kg，缩放 1:100，精度 0.01 kg）。

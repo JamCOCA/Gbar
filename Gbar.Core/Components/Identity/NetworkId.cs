@@ -1,4 +1,4 @@
-namespace Gbar.Core.Components;
+namespace Gbar.Core.Components.Identity;
 
 public struct NetworkId
 {

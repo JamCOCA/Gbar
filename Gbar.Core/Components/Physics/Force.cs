@@ -1,4 +1,4 @@
-namespace Gbar.Core.Components;
+namespace Gbar.Core.Components.Physics;
 
 /// <summary>
 /// 本 tick 的累积力（定点牛顿，缩放 1:100），向量方向相对于实体当前所在坐标域。

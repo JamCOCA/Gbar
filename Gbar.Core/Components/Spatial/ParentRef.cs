@@ -1,6 +1,6 @@
 using Arch.Core;
 
-namespace Gbar.Core.Components;
+namespace Gbar.Core.Components.Spatial;
 
 public struct ParentRef
 {

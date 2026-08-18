@@ -1,7 +1,7 @@
 using Arch.Core;
 using Arch.System;
 using Arch.System.SourceGenerator;
-using Gbar.Core.Components;
+using Gbar.Core.Components.Spatial;
 using Gbar.Core.Logging;
 
 namespace Gbar.Core.Systems;
