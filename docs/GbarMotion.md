@@ -86,23 +86,40 @@ public struct LocalVelocity { public long X, Y, Z; }
 
 ## 引力与天体
 
-KSP 式引力圈：任一时刻重力源唯一，SOI 半径按 `r = a·(m/M)^(2/5)` 加载时算好缓存在 `BodyOrbit` 里。
+KSP 式引力圈：任一时刻重力源唯一，SOI 半径按 `r = a·(m/M)^(2/5)` 加载时算好缓存在 `CelestialBody` 里。
 
 - 局部域飞行实体：引力朝行星心，`d` 直接是 `LocalPosition` 模长
 - 全局域实体：受母恒星引力或惯性
-- 天体自身不做力积分，挂 `BodyOrbit` 走开普勒轨道（周期性、可预测）
+- 天体自身不做力积分：星体间引力永不计算，公转由轨道根数解析求值（周期性、可预测、零漂移）
+- 星体的"质量"以 μ（= G·M）形式存在：引力公式只需引力源的 μ 和受力方的 m；SOI 质量比 = `μ_行星/μ_恒星`
 - 着地实体：不积分，见"着地体制"
 
+天体身份与轨道拆成两个组件：
+
 ```csharp
-public struct BodyOrbit
+/// 天体引力与自转身份：恒星和行星都挂。
+public struct CelestialBody
 {
     public double Mu;              // 引力参数 μ = G*M
     public double SurfaceRadius;   // 地表半径（米）
-    public double SoiRadius;       // 引力圈半径（米），加载时算好缓存
+    public double SoiRadius;       // 引力圈半径（米），加载时算好缓存；恒星 = 覆盖整个星系
     public float Rotation;         // 当前自转角（弧度）
     public float AngularVelocity;  // 自转角速度（rad/tick）
 }
+
+/// 公转轨道根数：只有行星挂（恒星是轨道中心，不挂）。
+public struct BodyOrbit
+{
+    public Entity CentralBody;     // 母恒星实体
+    public double SemiMajorAxis;   // 半长轴 a（米）
+    public double Eccentricity;    // 偏心率 e（圆轨道 = 0，退化为匀速圆周）
+    public double OrbitalPeriod;   // 公转周期（秒）
+    public double PhaseAtEpoch;    // 历元相位（初始平近点角，弧度）
+}
 ```
+
+- **恒星** = `GlobalPosition` + `CelestialBody`，位置固定（或星系质心），不挂 `BodyOrbit`
+- **行星** = `GlobalPosition` + `CelestialBody` + `BodyOrbit`，由 OrbitalSystem 按 `M = 2π·t/T + PhaseAtEpoch` 解开普勒方程求位置（double 算转回 long）
 
 ## 冲量物理层
 
@@ -253,27 +270,31 @@ public static class SpaceGrid
 
 兴趣集合 = 本层邻域 + 跨层投影查询（地表查头顶 R 范围轨道 cell，轨道船查星下点地表 region），R = 最大交互距离。超出 R 的高轨目标不进 AOI，走天体级低频通道，客户端只见光点。
 
-## 系统管线（每 tick 固定顺序）
+## 系统管线（每 tick 固定顺序，间隔 10 预留插入位）
 
-| Order | 系统 | 职责 |
-|---|---|---|
-| 10 | `GravitySystem` | 引力：往池加 `μ·m/d²/tickRate`（double 算 long 存） |
-| 20 | `ThrustSystem` | 推力：读推进组件，往池加 `F/tickRate` |
-| 30 | `DragSystem` | 阻力：大气内往池加 `-k·v·\|v\|/tickRate` |
-| 40 | `ImpulseIntegrationSystem` | 唯一积分点：`Δv = p/m`，残差留池 |
-| 50 | `MoveSystem` | 唯一移动点：两域各自 `pos += v`，纯整数加法 |
-| 60 | `LocomotionSystem` | 着地实体球面位移 + 地形吸附 |
-| — | `OrbitalSystem` | 推进星球公转自转（低频） |
-| — | `SoiTransferSystem` | 域切换，唯一坐标转换点（迟滞） |
-| — | `GroundTransitionSystem` | 着地/飞行切换（CommandBuffer 结构变更，迟滞） |
-| — | `SpaceAoiSystem` / `LocalAoiSystem` | cell/region 索引重挂 |
+| Order | 系统 | 职责 | 结构变更 |
+|---|---|---|---|
+| 10 | `OrbitalSystem` | 推进星球公转自转（低频，内部计数降频），最先跑保证引力/切换用到最新行星位置 | — |
+| 20 | `GravitySystem` | 引力：往池加 `μ·m/d²/tickRate`（double 算 long 存） | — |
+| 30 | `ThrustSystem` | 推力：读推进组件，往池加 `F/tickRate`，扣燃料 | — |
+| 40 | `DragSystem` | 阻力：大气内往池加 `-k·v·\|v\|/tickRate` | — |
+| 50 | `ImpulseIntegrationSystem` | 唯一积分点：`Δv = p/m`，残差留池 | — |
+| 60 | `MoveSystem` | 唯一移动点：两域各自 `pos += v`，纯整数加法（已实现） | — |
+| 70 | `LocomotionSystem` | 着地实体球面位移 + 地形吸附（与 MoveSystem 查询不重叠） | — |
+| 80 | `GroundTransitionSystem` | 着地/飞行切换（迟滞），位置已定稿后判定 | CommandBuffer |
+| 90 | `SoiTransferSystem` | 域切换，唯一坐标转换点（迟滞），最后判定穿越 | CommandBuffer |
+| 100 | `SpaceAoiSystem` | 全局域 cell 索引重挂 | CommandBuffer |
+| 110 | `LocalAoiSystem` | 局部域分层 region/cell 索引重挂 | CommandBuffer |
+| 120 | `NetSyncSystem` | 快照/增量生成（GbarNet.md），读最终状态 | — |
+
+排序依据：受力（20–40）→ 积分（50）→ 移动（60–70）→ 状态切换（80–90，位置定稿后判定，结构变更全部走 CommandBuffer 统一回放）→ 索引（100–110）→ 网络输出（120）。
 
 规则：
 
 1. 受力系统只准加 `Impulse`，谁都不准碰 `Velocity`
 2. 产生冲量的系统查询带 `[All<Impulse, Mass, ...Velocity>]`，避免往无积分能力的实体写入永不兑换的冲量
 3. 没有 `Mass` 的实体（着地角色、舱内乘员）由玩法系统直接管理位置，物理实体与玩法实体靠组件有无自然分层
-4. 天体挂 `BodyOrbit` 走开普勒轨道，不进力积分管线
+4. 天体挂 `CelestialBody`（引力/自转身份）+ `BodyOrbit`（公转根数，仅行星），走开普勒轨道，不进力积分管线
 5. 碰撞/爆炸统一往池里加冲量，不直接改 `Velocity`
 
 ## 明确不做

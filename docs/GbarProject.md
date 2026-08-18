@@ -2,7 +2,7 @@
 
 基于 [Arch](https://arch-ecs.gitbook.io/arch) ECS 框架的游戏服务器。核心设计：**查询内并行计算 + 结构变更延迟回放**。
 
-相关文档：[GbarMotion.md](GbarMotion.md)（坐标/物理/运动方案）、[GbarNet.md](GbarNet.md)（网络同步）、[arch-core.md](arch-core.md) / [arch-systems.md](arch-systems.md)（Arch 框架参考）
+相关文档：[GbarMotion.md](GbarMotion.md)（坐标/物理/运动方案）、[GbarSystems.md](GbarSystems.md)（系统清单与查询）、[GbarNet.md](GbarNet.md)（网络同步）、[arch-core.md](arch-core.md) / [arch-systems.md](arch-systems.md)（Arch 框架参考）
 
 ## 目录结构
 

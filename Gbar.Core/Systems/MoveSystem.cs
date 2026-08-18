@@ -12,7 +12,7 @@ namespace Gbar.Core.Systems;
 /// 本系统是唯一的位置积分点，排在所有改写速度的系统（引力/推力/阻力/力积分）之后。
 /// 查询由源码生成器并行调度；<see cref="Update"/> 仅做每 tick 一次的聚合统计与日志。
 /// </summary>
-[SystemOrder(50)]
+[SystemOrder(60)]
 public sealed partial class MoveSystem : FixedSystem
 {
     private static readonly QueryDescription _globalCountQuery = new QueryDescription().WithAll<GlobalPosition, GlobalVelocity>();
