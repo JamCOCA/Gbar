@@ -11,9 +11,13 @@ public abstract class FixedSystem : BaseSystem<World, float>
 {
     protected static CommandBufferHub Commands = null!;
 
+    /// <summary>宿主 GameServer，供系统访问网络/注册表等服务（仅主循环线程访问）。</summary>
+    protected static GameServer Server = null!;
+
     protected FixedSystem(GameServer server) : base(server.World)
     {
         Commands = server.FixedSystems.Commands;
+        Server = server;
         server.FixedSystems.Add(this);
     }
 }
@@ -26,9 +30,13 @@ public abstract class UpdateSystem : BaseSystem<World, float>
 {
     protected static CommandBufferHub Commands = null!;
 
+    /// <summary>宿主 GameServer，供系统访问网络/注册表等服务（仅主循环线程访问）。</summary>
+    protected static GameServer Server = null!;
+
     protected UpdateSystem(GameServer server) : base(server.World)
     {
         Commands = server.UpdateSystems.Commands;
+        Server = server;
         server.UpdateSystems.Add(this);
     }
 }

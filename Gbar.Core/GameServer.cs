@@ -1,6 +1,8 @@
 using System.Linq.Expressions;
 using Arch.Core;
 using Arch.System;
+using Gbar.Core.Net;
+using Gbar.Net.Server;
 using Schedulers;
 
 namespace Gbar.Core;
@@ -25,6 +27,12 @@ public sealed class GameServer : IDisposable
     /// <summary>每秒逻辑帧数。</summary>
     public int TickRate { get; }
 
+    /// <summary>
+    /// 周期纠偏 Keyframe 的发送间隔（tick），默认 10 秒（10 × <see cref="TickRate"/>）。
+    /// 不同客户端按 ClientId 相位错开（见 NetSyncSystem）；≤0 表示关闭周期纠偏。
+    /// </summary>
+    public int KeyframeIntervalTicks { get; set; }
+
     /// <summary>已执行的帧数，启动后从 0 递增。</summary>
     public long Tick { get; private set; }
 
@@ -40,6 +48,12 @@ public sealed class GameServer : IDisposable
     /// <summary>持久化提供方。设置后 <see cref="StopAsync"/> 停止循环后自动保存，<see cref="LoadAsync"/> 可在启动前手动加载。</summary>
     public Persistence.IPersistenceProvider? Persistence { get; set; }
 
+    /// <summary>网络服务器（LiteNetLib 封装）。经 <see cref="StartNet"/> 创建并启动后非空。</summary>
+    public NetServer? NetServer { get; private set; }
+
+    /// <summary>连接注册表 + NetId 分配器，随 <see cref="StartNet"/> 创建。</summary>
+    public ClientRegistry? ClientRegistry { get; private set; }
+
     /// <summary>每帧触发，参数为实际流逝时间（秒）。</summary>
     public event Action<float>? OnUpdate;
 
@@ -52,6 +66,7 @@ public sealed class GameServer : IDisposable
     public GameServer(int tickRate = 20)
     {
         TickRate = tickRate;
+        KeyframeIntervalTicks = tickRate * 10;
         _world = World.Create();
         _updateSystems = new UpdateSystemGroup();
         _fixedSystems = new FixedUpdateSystemGroup();
@@ -94,6 +109,18 @@ public sealed class GameServer : IDisposable
         return Persistence?.LoadAsync(_world, ct) ?? Task.CompletedTask;
     }
 
+    /// <summary>
+    /// 创建并启动网络服务器，监听指定端口。重复调用无效。
+    /// 通常在 <see cref="Start"/> 之前调用；网络系统（NetServerSystem/NetSyncSystem）会自动读取本实例。
+    /// </summary>
+    public void StartNet(int port, int maxConnections = 32)
+    {
+        if (NetServer is not null) return;
+        NetServer = new NetServer();
+        ClientRegistry = new ClientRegistry();
+        NetServer.Start(port, maxConnections);
+    }
+
     /// <summary>启动后台主循环。重复调用无效。</summary>
     public void Start()
     {
@@ -111,6 +138,9 @@ public sealed class GameServer : IDisposable
         _cts.Dispose();
         _cts = null;
         _loopTask = null;
+
+        // 循环已退出：先断开所有网络连接（无新数据写入），再安全遍历 World 序列化
+        NetServer?.Stop();
 
         // 循环已退出，无线程竞争，此时遍历 World 序列化是安全的
         if (Persistence is not null)
@@ -195,6 +225,7 @@ public sealed class GameServer : IDisposable
     public void Dispose()
     {
         _cts?.Cancel();
+        NetServer?.Dispose();
         _updateSystems.Dispose();   // 组 Dispose 会连带释放其 Commands
         _fixedSystems.Dispose();
         World.Destroy(_world);

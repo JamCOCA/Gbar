@@ -30,19 +30,19 @@
 
 ## 10 OrbitalSystem
 
-**职责**：按 `BodyOrbit` 的轨道根数解析推进行星公转位置（`M = 2π·t/T + PhaseAtEpoch`，解开普勒方程，double 算转回 long），并推进所有天体的自转角（`CelestialBody.Rotation += AngularVelocity`）。内部计数降频（如每 20 tick 实际推进一次），但必须排在最前——引力和 SOI 切换都依赖行星当前位置。
+**职责**：按 `Orbit` 的轨道根数解析推进行星公转位置（`M = 2π·t/T + InitialPhase`，解开普勒方程，double 算转回 long），并推进所有天体的自转角（`Celestial.Rotation += AngularVelocity`）。内部计数降频（如每 20 tick 实际推进一次），但必须排在最前——引力和 SOI 切换都依赖行星当前位置。
 
 **查询**：
 
 ```csharp
 [Query(Parallel = true)]
-[All<CelestialBody, BodyOrbit, GlobalPosition>]   // ⏳ CelestialBody、BodyOrbit 待建（GbarMotion.md 已定字段）
-private static void Orbit([Data] in float delta, ref CelestialBody body, in BodyOrbit orbit, ref GlobalPosition pos);
+[All<Celestial, Orbit, GlobalPosition>]   // ⏳ Celestial、Orbit 待建（GbarMotion.md 已定字段）
+private static void Orbit([Data] in float delta, ref Celestial body, in Orbit orbit, ref GlobalPosition pos);
 
 [Query(Parallel = true)]
-[All<CelestialBody, GlobalPosition>]
-[None<BodyOrbit>]                                 // 恒星等不挂轨道的天体：只推进自转
-private static void Spin([Data] in float delta, ref CelestialBody body);
+[All<Celestial, GlobalPosition>]
+[None<Orbit>]                                 // 恒星等不挂轨道的天体：只推进自转
+private static void Spin([Data] in float delta, ref Celestial body);
 ```
 
 **备注**：天体不挂 `Mass`/`Impulse`，不走力积分；位置由轨道参数直接解析。
@@ -63,7 +63,7 @@ private static void GravityLocal(ref Impulse impulse, in LocalPosition pos, in P
 private static void GravityGlobal(ref Impulse impulse, in GlobalPosition pos, in Mass mass);
 ```
 
-**备注**：`μ` 从引力源的 `CelestialBody` 只读获取（`World.Get<CelestialBody>(parent.Parent)`，并行只读安全）；着地实体无 `Mass`，天然不匹配。
+**备注**：`μ` 从引力源的 `Celestial` 只读获取（`World.Get<Celestial>(parent.Parent)`，并行只读安全）；着地实体无 `Mass`，天然不匹配。
 
 ## 30 ThrustSystem
 
@@ -91,7 +91,7 @@ private static void Thrust(ref Thruster thruster, ref Impulse impulse, in Mass m
 private static void Drag(ref Impulse impulse, in LocalPosition pos, in LocalVelocity vel, in Mass mass);
 ```
 
-**备注**：高度 = `|LocalPosition| − SurfaceRadius`；高于大气顶直接跳过。⏳ 大气参数（密度剖面）需扩展 `CelestialBody` 或独立组件。
+**备注**：高度 = `|LocalPosition| − SurfaceRadius`；高于大气顶直接跳过。⏳ 大气参数（密度剖面）需扩展 `Celestial` 或独立组件。
 
 ## 50 ImpulseIntegrationSystem
 
@@ -175,7 +175,7 @@ private static void CheckEnter(Entity entity, in GlobalPosition pos);
 private static void CheckExit(Entity entity, in LocalPosition pos, in ParentRef parent);
 ```
 
-**备注**：转换所需的行星位置/速度/`CelestialBody` 只读获取；排在移动之后，用本 tick 定稿位置判定。
+**备注**：转换所需的行星位置/速度/`Celestial` 只读获取；排在移动之后，用本 tick 定稿位置判定。
 
 ## 100 SpaceAoiSystem
 

@@ -14,6 +14,7 @@ Gbar/
 │   ├── Components/                   组件定义（一组件一文件，按功能分二级目录）
 │   │   ├── Spatial/                  坐标域：Global/Local Position/Velocity + ParentRef
 │   │   ├── Physics/                  物理：Mass、Force（将改 Impulse）
+│   │   ├── Celestial/                天体：Celestial（引力/自转）、Orbit（公转根数）
 │   │   └── Identity/                 标识：NetworkId、PlayerTag
 │   ├── Maths/Fix.cs                  定点数换算工具（long，1:100）
 │   ├── SystemGroup/                  变步长/定步长两个系统组（各持有 Commands）

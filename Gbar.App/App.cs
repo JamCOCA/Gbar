@@ -12,6 +12,8 @@ public sealed class App : IDisposable
 {
     #region 成员
 
+    private const int NetPort = 9050;
+
     private GameServer? _server;
     private Task? _statusTask;
     private readonly TaskCompletionSource _quit = new();
@@ -32,6 +34,7 @@ public sealed class App : IDisposable
         _server.Persistence = new JsonPersistenceProvider(
             Path.Combine(AppContext.BaseDirectory, "save", "world.json"));
         _server.RegisterSystems();  // 反射扫描所有 FixedSystem/UpdateSystem 子类并自动注册
+        _server.StartNet(NetPort);  // 启动网络监听（NetServerSystem/NetSyncSystem 随反射注册生效）
 
         _server.Initialize();
         await _server.LoadAsync();  // 启动前从持久化存储恢复实体
@@ -61,7 +64,7 @@ public sealed class App : IDisposable
         };
 
         server.Start();
-        Log.Info($"服务器已启动（{server.TickRate} tick/s），按回车或 Ctrl+C 停止...");
+        Log.Info($"服务器已启动（{server.TickRate} tick/s，监听 {NetPort}），按回车或 Ctrl+C 停止...");
 
         _statusTask = Task.Run(StatusLoop);
     }
