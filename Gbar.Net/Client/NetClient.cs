@@ -1,3 +1,4 @@
+using System.Threading;
 using Gbar.Net.Protocol;
 using LiteNetLib;
 
@@ -16,6 +17,14 @@ public sealed class NetClient : IDisposable
     /// <summary>后台轮询线程</summary>
     private Thread? _pollThread;
     private volatile bool _running;
+    /// <summary>上行分片消息序号（全局递增）。</summary>
+    private ushort _nextMessageId = 1;
+    /// <summary>下行分片重组器（轮询线程单线程访问）。</summary>
+    private readonly FragmentAssembler _assembler = new();
+    /// <summary>累计发送字节数（应用层 payload，不含 LiteNetLib 包头）。</summary>
+    private long _bytesSent;
+    /// <summary>累计接收字节数（应用层 payload，不含 LiteNetLib 包头）。</summary>
+    private long _bytesReceived;
 
     /// <summary>数据包处理器，收到服务器数据包时通过 <see cref="PacketCodec.TryDispatch"/> 分发给它</summary>
     public IPacketHandler? Handler { get; set; }
@@ -25,6 +34,10 @@ public sealed class NetClient : IDisposable
     public event Action<string>? Disconnected;
     /// <summary>当前是否已连接到服务器</summary>
     public bool IsConnected => _peer is { ConnectionState: ConnectionState.Connected };
+    /// <summary>累计发送字节数（线程安全，供上层统计上行速率）。</summary>
+    public long BytesSent => Interlocked.Read(ref _bytesSent);
+    /// <summary>累计接收字节数（线程安全，供上层统计下行速率）。</summary>
+    public long BytesReceived => Interlocked.Read(ref _bytesReceived);
 
     /// <summary>
     /// 连接到指定服务器
@@ -53,13 +66,16 @@ public sealed class NetClient : IDisposable
             _peer = null;
             Disconnected?.Invoke(info.Reason.ToString());
         };
-        // 收到服务器数据，解码后分发给 Handler
+        // 收到服务器数据，重组（分片）后解码分发给 Handler
         _listener.NetworkReceiveEvent += (peer, reader, channel, method) =>
         {
             if (Handler is null) return;
             var data = new byte[reader.AvailableBytes];
             reader.GetBytes(data, data.Length);
-            PacketCodec.TryDispatch(data, Handler);
+            Interlocked.Add(ref _bytesReceived, data.Length);
+            var frame = _assembler.Accept(data);   // 分片则重组，未收齐返回 null
+            if (frame is not null)
+                PacketCodec.TryDispatch(frame, Handler);
         };
 
         _manager.Start();
@@ -84,7 +100,23 @@ public sealed class NetClient : IDisposable
     /// <param name="body">数据包内容</param>
     public void Send<T>(PacketType type, in T body) where T : struct
     {
-        _peer?.Send(PacketCodec.Encode(type, body), PacketCodec.ChannelFor(type));
+        if (_peer is null) return;
+        var method = PacketCodec.ChannelFor(type);
+        var frame = PacketCodec.EncodeFrame(type, body);
+        var maxSize = _peer.GetMaxSinglePacketSize(method);
+
+        if (frame.Length <= maxSize)
+        {
+            _peer.Send(frame, method);
+            Interlocked.Add(ref _bytesSent, frame.Length);
+            return;
+        }
+
+        foreach (var fragment in PacketCodec.SplitFrame(frame, maxSize, _nextMessageId++))
+        {
+            _peer.Send(fragment, method);
+            Interlocked.Add(ref _bytesSent, fragment.Length);
+        }
     }
 
     /// <summary>

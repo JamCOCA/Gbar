@@ -42,21 +42,27 @@ public sealed class NetSyncSystem : FixedSystem
 
             if (ShouldSendKeyframe(session, tick))
             {
-                net.Send(session.ClientId, PacketType.Keyframe, new KeyframePacket
-                {
-                    Tick = tick,
-                    Entities = _current.Values.ToArray(),
-                });
-                session.Synced = true;
-                session.BaselineTick = tick;
-                session.LastKeyframeTick = tick;
-                session.LastSent.Clear();
-                foreach (var (netId, st) in _current) session.LastSent[netId] = st;
+                SendKeyframe(net, session, tick);
                 continue;
             }
 
             SendDelta(net, session, tick);
         }
+    }
+
+    /// <summary>发送全量 Keyframe 并重置该连接的 diff 基线。</summary>
+    private void SendKeyframe(NetServer net, ClientSession session, int tick)
+    {
+        net.Send(session.ClientId, PacketType.Keyframe, new KeyframePacket
+        {
+            Tick = tick,
+            Entities = _current.Values.ToArray(),
+        });
+        session.Synced = true;
+        session.BaselineTick = tick;
+        session.LastKeyframeTick = tick;
+        session.LastSent.Clear();
+        foreach (var (netId, st) in _current) session.LastSent[netId] = st;
     }
 
     /// <summary>是否该发 Keyframe：首次对齐必发；之后按间隔周期纠偏，相位按 ClientId 错开。</summary>
@@ -123,6 +129,9 @@ public sealed class NetSyncSystem : FixedSystem
         }
         foreach (var netId in session.LastSent.Keys)
             if (!_current.ContainsKey(netId)) despawned.Add(netId);
+
+        if (spawned.Count == 0 && updated.Count == 0 && despawned.Count == 0)
+            return;
 
         net.Send(session.ClientId, PacketType.Delta, new DeltaPacket
         {

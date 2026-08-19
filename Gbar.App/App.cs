@@ -1,5 +1,7 @@
 using Gbar.App.Logging;
 using Gbar.Core;
+using Gbar.Core.Components.Identity;
+using Gbar.Core.Components.Spatial;
 using Gbar.Core.Logging;
 using Gbar.Core.Persistence;
 
@@ -46,10 +48,21 @@ public sealed class App : IDisposable
     /// </summary>
     public void Debug()
     {
-        // 示例：
-        // _server!.World.Create(
-        //     new Position { X = 0, Y = 0 },
-        //     new Velocity { X = 1, Y = 1 });
+        // 网络同步测试：注入 100 个随机位置的全局域实体，统一沿 +X 方向固定速度运动
+        var world = _server!.World;
+        var registry = _server.ClientRegistry!;
+        for (var i = 0; i < 100; i++)
+        {
+            world.Create(
+                new NetworkId { Value = registry.AllocNetId() },
+                new GlobalPosition
+                {
+                    X = Random.Shared.NextInt64(-100000, 100000),
+                    Y = Random.Shared.NextInt64(-100000, 100000),
+                    Z = Random.Shared.NextInt64(-100000, 100000),
+                },
+                new GlobalVelocity { X = 1000, Y = 0, Z = 0 });
+        }
     }
 
     /// <summary>启动：开启主循环、注册退出信号并启动状态汇报任务。</summary>

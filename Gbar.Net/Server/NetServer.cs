@@ -22,6 +22,10 @@ public sealed class NetServer : IDisposable
     /// <summary>后台轮询线程</summary>
     private Thread? _pollThread;
     private volatile bool _running;
+    /// <summary>下行分片消息序号（全局递增；仅接收端据此区分消息，无需按连接隔离）。</summary>
+    private ushort _nextMessageId = 1;
+    /// <summary>上行分片重组器（轮询线程单线程访问）。当前客户端上行均为小包不分片，留作对称实现。</summary>
+    private readonly FragmentAssembler _assembler = new();
 
     /// <summary>网络事件队列，游戏主线程从中取出事件处理</summary>
     public ConcurrentQueue<NetEvent> Events => _events;
@@ -63,7 +67,9 @@ public sealed class NetServer : IDisposable
         {
             var data = new byte[reader.AvailableBytes];
             reader.GetBytes(data, data.Length);
-            _events.Enqueue(NetEvent.Packet(peer.Id, data));
+            var frame = _assembler.Accept(data);   // 分片则重组，未收齐返回 null
+            if (frame is not null)
+                _events.Enqueue(NetEvent.Packet(peer.Id, frame));
         };
 
         if (!_manager.Start(port))
@@ -84,7 +90,27 @@ public sealed class NetServer : IDisposable
     public void Send<T>(int clientId, PacketType type, in T body) where T : struct
     {
         if (!_peers.TryGetValue(clientId, out var peer)) return;
-        peer.Send(PacketCodec.Encode(type, body), PacketCodec.ChannelFor(type));
+        SendToPeer(peer, type, body);
+    }
+
+    /// <summary>
+    /// 统一发送：序列化 → 压缩 → 若超过该通道单包上限则应用层分片 → 逐片发送。
+    /// ReliableOrdered（Keyframe 等）单包上限足够大，由 LiteNetLib 底层分片，不会走到应用层分片。
+    /// </summary>
+    private void SendToPeer<T>(NetPeer peer, PacketType type, in T body) where T : struct
+    {
+        var method = PacketCodec.ChannelFor(type);
+        var frame = PacketCodec.EncodeFrame(type, body);
+        var maxSize = peer.GetMaxSinglePacketSize(method);
+
+        if (frame.Length <= maxSize)
+        {
+            peer.Send(frame, method);
+            return;
+        }
+
+        foreach (var fragment in PacketCodec.SplitFrame(frame, maxSize, _nextMessageId++))
+            peer.Send(fragment, method);
     }
 
     /// <summary>

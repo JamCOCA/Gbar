@@ -4,7 +4,7 @@
 
 ## 同步模型
 
-- **Delta（常态）**：每 tick 只发变化实体（Spawned / Updated / Despawned），相对该连接**上次已 ACK 的快照**生成。走 Sequenced 通道，旧状态不重传，丢包只是多发数据，不错位。
+- **Delta（常态）**：每 tick 只发变化实体（Spawned / Updated / Despawned），相对该连接**上次已 ACK 的快照**生成。走 Sequenced 通道，旧状态不重传，丢包只是多发数据，不错位。超单包上限的大包由传输层自动分片重组（Keyframe/Delta 统一），业务协议无感知。
 - **Keyframe（全量快照）**：三种情况发——新连接对齐、周期纠偏、连续 N tick 未 ACK 回退。按 `ClientId % K` 分组错峰，避免发送尖峰。
 - **Ack**：客户端回执"已应用到第 T tick"，服务器以此确定 Delta 基线。客户端校验 `Delta.BaseTick`，不符则丢弃等 Keyframe。
 
@@ -12,12 +12,24 @@
 
 封包格式：`[PacketType: 1 byte][MemoryPack 序列化包体]`，服务器与客户端共享 `Gbar.Net.Protocol` 里的定义。握手/可靠通道/心跳由 LiteNetLib 负责。
 
+传输层统一封包管线（Keyframe/Delta 共用，业务协议不感知分包/压缩）：
+
+```
+普通帧:  [PacketType: 1][MemoryPack body]
+压缩帧:  [0xFE: 1][PacketType: 1][compressed body]
+分片包:  [0xFF: 1][MessageId: 2][FragIndex: 2][FragCount: 2][frame fragment]   # 7 字节头 + 帧片段
+```
+
+- **压缩**：应用消息超过 `MinCompressBytes` 且压缩有收益时出现压缩帧。以整个帧为单位（包级），不是单个 Entity——批量数据才有跨实体冗余可压。默认不压缩（`NullPacketCompressor`），留 `IPacketCompressor` 钩子，后续换 LZ4/Zstd 只改 `PacketCodec.Compressor`。
+- **分片**：帧超过该通道 `GetMaxSinglePacketSize()` 时拆成多个分片包；接收端按 `MessageId + FragIndex` 顺序重组后，再解压分发。丢片/乱序丢弃整个消息，靠 Keyframe 兜底。
+- ReliableOrdered（Keyframe 等）由 LiteNetLib 底层分片，单包上限足够大，不会走到应用层分片；仅 Sequenced（Delta）会触发。
+
 | 包 | 方向 | 说明 |
 |---|---|---|
 | `Hello` / `Welcome` | 握手 | 版本协商、分配 ClientId 与玩家本体 NetId；Welcome 携带 ServerTick 供两端 tick 对齐 |
 | `Galaxy` | S→C | 星图表（天体轨道根数），Welcome 后一次性下发，之后天体位置两端各自按 tick 解析 |
-| `Keyframe` | S→C | 全量快照（ReliableOrdered，需分片） |
-| `Delta` | S→C | 常态增量（Sequenced） |
+| `Keyframe` | S→C | 全量快照（ReliableOrdered，LiteNetLib 底层分片） |
+| `Delta` | S→C | 常态增量（Sequenced；超限由传输层自动分片重组） |
 | `Ack` | C→S | 回执（Unreliable，可降频） |
 | `Bye` | 双向 | 优雅断开 |
 
@@ -81,7 +93,7 @@ LiteNetLib 后台线程 ──PollEvents──> NetServer.Events (ConcurrentQueu
   └─ 定步长组：... → NetSyncSystem.Update（Order 120）直接 net.Send 生成 Keyframe/Delta
 ```
 
-- **网络线程永不碰 World**：它只把原始字节丢进 `Events` 队列
+- **网络线程永不碰 World**：它只做字节级的分片重组（`FragmentAssembler`），把完整帧丢进 `Events` 队列
 - **主循环线程独占 World 与注册表**：NetServerSystem 直接 `World.Create/Destroy` 是安全的（不在并行查询内，无需 CommandBuffer）
 - **发送跨线程安全**：`NetSyncSystem` 在主线程调 `net.Send`，LiteNetLib 的 `NetPeer.Send` 本身线程安全
 
@@ -116,9 +128,12 @@ LiteNetLib 后台线程 ──PollEvents──> NetServer.Events (ConcurrentQueu
 
 ```
 Gbar.Net/           传输层（LiteNetLib + MemoryPack，不依赖 Gbar.Core）
-  Server/NetServer.cs        服务器封装 + 事件队列
+  Server/NetServer.cs        服务器封装 + 事件队列 + 分片发送/重组
+  Client/NetClient.cs        客户端封装 + 分片发送/重组
   Protocol/Packets.cs        包定义（EntityState/CelestialState/GalaxyPacket/...）
-  Protocol/PacketCodec.cs    编解码 + 分发 + 通道选择
+  Protocol/PacketCodec.cs    编解码 + 分发 + 通道选择 + 压缩/分片
+  Protocol/PacketCompressor.cs   包级压缩钩子（IPacketCompressor，默认不压缩）
+  Protocol/FragmentAssembler.cs  分片重组器（按 MessageId 顺序累积）
 Gbar.Core/          ECS + 系统（依赖 Gbar.Net）
   Net/ClientRegistry.cs      会话 + NetId
   Systems/NetServerSystem.cs 握手/生命周期（UpdateSystem）
@@ -136,5 +151,5 @@ AOI 按 [GbarMotion.md](GbarMotion.md) 的分域索引实现，应提前到 MVP�
 ## 后续扩展（先不实现）
 
 - AOI 可见集过滤：Enter/Leave 复用 Spawned/Despawned
-- 大包 LZ4 压缩 + 分片重组
+- LZ4/Zstd 压缩：实现 `IPacketCompressor` 并赋给 `PacketCodec.Compressor`（分片已落地，压缩仅缺算法实现）
 - 输入上行与客户端预测回滚（协议预留）

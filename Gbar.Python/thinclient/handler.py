@@ -68,7 +68,8 @@ class ClientPacketHandler(IPacketHandler):
 
     def OnDelta(self, packet):
         """校验规则：BaseTick <= 本地 tick < CurrTick 即可应用（绝对状态 + 幂等删除，
-        基线滞后不影响正确性）；BaseTick > 本地 tick 说明中间漏包，丢弃并回执对齐。"""
+        基线滞后不影响正确性）；BaseTick > 本地 tick 说明中间漏包，丢弃并回执对齐。
+        大包由传输层自动分片重组（PacketCodec/FragmentAssembler），本层拿到的已是完整包。"""
         local = self.state.snapshot().tick
         self.packets.record(
             packet.CurrTick, "S→C", "Delta",

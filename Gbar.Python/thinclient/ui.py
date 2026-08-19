@@ -8,6 +8,7 @@
 """
 
 import tkinter as tk
+import time
 from tkinter import ttk
 
 from .client import ThinClient
@@ -25,6 +26,11 @@ class ClientUI:
         self._selected_net_id = None  # 监视栏当前选中的实体
         self._entity_ids = []  # 列表行号 → NetId 映射
         self._log_revision = -1  # 已渲染的日志版本号
+        self._net_last_time = time.monotonic()  # 网速采样基准时间
+        self._net_last_sent = 0                  # 采样起点的累计发送字节
+        self._net_last_recv = 0                  # 采样起点的累计接收字节
+        self._net_up = 0.0                       # 上行速率 B/s
+        self._net_down = 0.0                     # 下行速率 B/s
 
         self._root = tk.Tk()
         self._root.title("ThinClient")
@@ -116,8 +122,36 @@ class ClientUI:
     def _entity_name(e: EntityView, player_net_id: int) -> str:
         return f"Player #{e.net_id}" if e.net_id == player_net_id else f"Entity #{e.net_id}"
 
+    NET_SAMPLE_S = 0.5  # 网速采样窗口（秒），低于此间隔沿用上一采样值
+
+    @staticmethod
+    def _fmt_rate(bps: float) -> str:
+        if bps >= 1_048_576:
+            return f"{bps / 1_048_576:.2f} MB/s"
+        if bps >= 1024:
+            return f"{bps / 1024:.2f} KB/s"
+        return f"{bps:.1f} B/s"
+
     def _update_info(self, snap: WorldSnapshot):
-        self._info.config(text=f"tick      {snap.tick}\nentities  {len(snap.entities)}\nplayer    netId={snap.player_net_id}")
+        now = time.monotonic()
+        elapsed = now - self._net_last_time
+        if elapsed >= self.NET_SAMPLE_S:
+            sent = self._client.net.BytesSent
+            recv = self._client.net.BytesReceived
+            self._net_up = (sent - self._net_last_sent) / elapsed
+            self._net_down = (recv - self._net_last_recv) / elapsed
+            self._net_last_time = now
+            self._net_last_sent = sent
+            self._net_last_recv = recv
+        self._info.config(
+            text=(
+                f"tick      {snap.tick}\n"
+                f"entities  {len(snap.entities)}\n"
+                f"player    netId={snap.player_net_id}\n"
+                f"up        {self._fmt_rate(self._net_up)}\n"
+                f"down      {self._fmt_rate(self._net_down)}"
+            )
+        )
 
     def _update_entity_list(self, snap: WorldSnapshot):
         ids = sorted(snap.entities)

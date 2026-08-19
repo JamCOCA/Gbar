@@ -20,10 +20,11 @@ public sealed partial class MoveSystem : FixedSystem
 
     public MoveSystem(GameServer server) : base(server) { }
 
-    /// <summary>base.Update 会执行所有 [Query] 方法（含并行），返回后统计与日志在主线程安全执行。</summary>
+    /// <summary>手动调用源码生成器生成的查询入口（并行），返回后统计与日志在主线程安全执行。</summary>
     public override void Update(in float delta)
     {
-        base.Update(in delta);
+        MoveGlobalQuery(World);
+        MoveLocalQuery(World);
         Log.Debug($"MoveSystem 全局域 {World.CountEntities(in _globalCountQuery)} 个实体，局部域 {World.CountEntities(in _localCountQuery)} 个实体");
     }
 
