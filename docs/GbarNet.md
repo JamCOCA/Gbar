@@ -4,7 +4,7 @@
 
 ## 同步模型
 
-- **Delta（常态）**：每 tick 只发变化实体（Spawned / Updated / Despawned），相对该连接**上次已 ACK 的快照**生成。走 Sequenced 通道，旧状态不重传，丢包只是多发数据，不错位。超单包上限的大包由传输层自动分片重组（Keyframe/Delta 统一），业务协议无感知。
+- **Delta（常态）**：每 tick 只发变化（Spawned / Updated / Despawned），相对该连接**上次已 ACK 的快照**生成。Updated 是**字段级增量**（按字段掩码只发变化的坐标/速度/空间字段，见下）。走 Sequenced 通道，旧状态不重传，丢包只是多发数据，不错位。超单包上限的大包由传输层自动分片重组（Keyframe/Delta 统一），业务协议无感知。
 - **Keyframe（全量快照）**：三种情况发——新连接对齐、周期纠偏、连续 N tick 未 ACK 回退。按 `ClientId % K` 分组错峰，避免发送尖峰。
 - **Ack**：客户端回执"已应用到第 T tick"，服务器以此确定 Delta 基线。客户端校验 `Delta.BaseTick`，不符则丢弃等 Keyframe。
 
@@ -29,7 +29,7 @@
 | `Hello` / `Welcome` | 握手 | 版本协商、分配 ClientId 与玩家本体 NetId；Welcome 携带 ServerTick 供两端 tick 对齐 |
 | `Galaxy` | S→C | 星图表（天体轨道根数），Welcome 后一次性下发，之后天体位置两端各自按 tick 解析 |
 | `Keyframe` | S→C | 全量快照（ReliableOrdered，LiteNetLib 底层分片） |
-| `Delta` | S→C | 常态增量（Sequenced；超限由传输层自动分片重组） |
+| `Delta` | S→C | 常态增量：Spawned 全量 / Updated 字段级（Sequenced；超限由传输层自动分片重组） |
 | `Ack` | C→S | 回执（Unreliable，可降频） |
 | `Bye` | 双向 | 优雅断开 |
 
@@ -44,6 +44,18 @@ public partial struct EntityState
 }
 // 合计 56 B/实体（MemoryPack 头部按 ~2 B 摊销，按 58 B 估算）
 // 坐标必须 long 定点：星系级坐标超出 float 精度，且定点保证两端逐 bit 一致
+
+// 字段级增量（Delta.Updated 的元素）：Mask 指示哪些字段在本 tick 变化，
+// 自定义 formatter 只序列化被标记的字段，未变化的字段不占字节。
+public struct EntityDelta
+{
+    public int NetId;               // 4 B  标识符，恒定发送
+    public byte Mask;               // 1 B  EntityFields 脏位掩码
+    public int SpaceNetId;          // 4 B  仅当 Mask & SpaceNetId
+    public long PosX, PosY, PosZ;   // 8 B/字段，仅当对应位被标记
+    public long VelX, VelY, VelZ;   // 8 B/字段，仅当对应位被标记
+}
+// 例：仅 PosX 变化 → 4+1+8 = 13 B（实体级 56 B 的 23%）；三个位置都变 → 4+1+24 = 29 B（52%）
 ```
 
 ## 天体同步：不同步位置

@@ -1,100 +1,72 @@
+using System.Buffers;
 using MemoryPack;
+using Gbar.Net.Protocol.Packets;
 
 namespace Gbar.Net.Protocol;
 
 /// <summary>
-/// 单个实体的同步状态，Keyframe/Delta 包体的基本元素。
-/// 协议层不引用 ECS 组件，保持 Core 与传输解耦。
-/// 坐标/速度为定点 long（1:100，见 GbarMotion.md），不用 float——
-/// 星系级坐标超出 float 精度，且定点保证两端逐 bit 一致。
+/// 包体结构定义见 <see cref="Packets"/> 命名空间下的各文件；本文件仅保留包的序列化功能（formatter）。
 /// </summary>
-[MemoryPackable]
-public partial struct EntityState
-{
-    public int NetId;                   // 4 B
-    public int SpaceNetId;              // 4 B  所属空间（ParentRef 指向实体的 NetId）；0 = 全局域
-    public long PosX, PosY, PosZ;       // 24 B 定点位置（所在域坐标系）
-    public long VelX, VelY, VelZ;       // 24 B 定点速度（着地实体由位置差分现算填充）
-}
-// 合计 56 B/实体（MemoryPack 头部按 ~2 B 摊销，按 58 B 估算）
 
 /// <summary>
-/// 天体静态定义：星图数据，入网时一次性下发（GalaxyPacket），之后永不逐 tick 同步。
-/// 天体位置是自变量为 tick 的纯函数，两端各自按轨道根数解析求值。
+/// <see cref="EntityDelta"/> 数组的手写序列化：长度头 + 逐元素按 <see cref="EntityDelta.Mask"/> 写出，
+/// 未变化字段不占字节。EntityDelta 是 unmanaged struct，默认会被 MemoryPack 按 64 B/元素整块序列化（含 padding），
+/// 故用本 formatter 覆盖。经 <see cref="EntityDeltaArrayFormatterAttribute"/> 关联到 DeltaPacket.Updated 字段。
 /// </summary>
-[MemoryPackable]
-public partial struct CelestialState
+public sealed class EntityDeltaArrayFormatter : MemoryPackFormatter<EntityDelta[]>
 {
-    public int NetId;
-    public int ParentNetId;             // 母天体 NetId；-1 = 恒星（轨道中心）
-    public double Mu;                   // 引力参数 μ = G·M
-    public double SurfaceRadius;
-    public double SoiRadius;
-    public float AngularVelocity;       // 自转角速度（rad/tick）
-    public float InitialRotation;       // tick 0 时的自转角；Rotation = InitialRotation + AngularVelocity × tick
-    public double SemiMajorAxis;        // 轨道根数（恒星忽略）
-    public double Eccentricity;
-    public double OrbitalPeriod;
-    public double InitialPhase;
-}
+    public override void Serialize<TBufferWriter>(ref MemoryPackWriter<TBufferWriter> writer, scoped ref EntityDelta[]? value)
+    {
+        if (value is null)
+        {
+            writer.WriteNullCollectionHeader();
+            return;
+        }
+        writer.WriteCollectionHeader(value.Length);
+        foreach (var d in value)
+            WriteEntityDelta(ref writer, d);
+    }
 
-/// <summary>S→C 星图表：Welcome 之后、首个 Keyframe 之前下发一次（ReliableOrdered）。</summary>
-[MemoryPackable]
-public partial struct GalaxyPacket
-{
-    public CelestialState[] Bodies;
-}
+    public override void Deserialize(ref MemoryPackReader reader, scoped ref EntityDelta[]? value)
+    {
+        reader.TryReadCollectionHeader(out var count);
+        value = new EntityDelta[count];
+        for (var i = 0; i < count; i++)
+        {
+            ref var d = ref value[i];
+            d.NetId = reader.ReadUnmanaged<int>();
+            d.Mask = reader.ReadUnmanaged<byte>();
+            if ((d.Mask & (byte)EntityFields.SpaceNetId) != 0) d.SpaceNetId = reader.ReadUnmanaged<int>();
+            if ((d.Mask & (byte)EntityFields.PosX) != 0) d.PosX = reader.ReadUnmanaged<long>();
+            if ((d.Mask & (byte)EntityFields.PosY) != 0) d.PosY = reader.ReadUnmanaged<long>();
+            if ((d.Mask & (byte)EntityFields.PosZ) != 0) d.PosZ = reader.ReadUnmanaged<long>();
+            if ((d.Mask & (byte)EntityFields.VelX) != 0) d.VelX = reader.ReadUnmanaged<long>();
+            if ((d.Mask & (byte)EntityFields.VelY) != 0) d.VelY = reader.ReadUnmanaged<long>();
+            if ((d.Mask & (byte)EntityFields.VelZ) != 0) d.VelZ = reader.ReadUnmanaged<long>();
+        }
+    }
 
-/// <summary>C→S 版本协商包，协议版本不符服务器直接断开。</summary>
-[MemoryPackable]
-public partial struct HelloPacket
-{
-    public int ProtocolVersion;
-}
-
-/// <summary>S→C 身份分配包；PlayerNetId 为服务器为该连接创建的玩家本体实体。ServerTick 用于两端 tick 对齐（天体轨道求值的时间基准）。</summary>
-[MemoryPackable]
-public partial struct WelcomePacket
-{
-    public int ClientId;
-    public int TickRate;
-    public int ServerTick;
-    public int PlayerNetId;
-}
-
-/// <summary>S→C 全量快照包：新连接对齐 / 周期纠偏 / 长时间未 ACK 回退重建三种情况发送。</summary>
-[MemoryPackable]
-public partial struct KeyframePacket
-{
-    public int Tick;
-    public EntityState[] Entities;
+    private static void WriteEntityDelta<TBufferWriter>(ref MemoryPackWriter<TBufferWriter> writer, in EntityDelta d)
+        where TBufferWriter : IBufferWriter<byte>
+    {
+        writer.WriteUnmanaged(d.NetId);
+        writer.WriteUnmanaged(d.Mask);
+        if ((d.Mask & (byte)EntityFields.SpaceNetId) != 0) writer.WriteUnmanaged(d.SpaceNetId);
+        if ((d.Mask & (byte)EntityFields.PosX) != 0) writer.WriteUnmanaged(d.PosX);
+        if ((d.Mask & (byte)EntityFields.PosY) != 0) writer.WriteUnmanaged(d.PosY);
+        if ((d.Mask & (byte)EntityFields.PosZ) != 0) writer.WriteUnmanaged(d.PosZ);
+        if ((d.Mask & (byte)EntityFields.VelX) != 0) writer.WriteUnmanaged(d.VelX);
+        if ((d.Mask & (byte)EntityFields.VelY) != 0) writer.WriteUnmanaged(d.VelY);
+        if ((d.Mask & (byte)EntityFields.VelZ) != 0) writer.WriteUnmanaged(d.VelZ);
+    }
 }
 
 /// <summary>
-/// S→C 增量包（常态）。BaseTick = 该连接上次 ACK 的 tick，即本包相对基线；
-/// 客户端校验 BaseTick == 本地 LastAppliedTick，不符则丢弃等 Keyframe。
-/// 单包若超过 Sequenced 通道上限，由传输层自动分片（见 PacketCodec/FragmentAssembler），本协议无需感知。
+/// 把 <see cref="EntityDeltaArrayFormatter"/> 关联到 <see cref="DeltaPacket.Updated"/> 字段。
+/// MemoryPack 源生成器看到字段上的该 attribute，会用 <see cref="GetFormatter"/> 返回的 formatter
+/// 序列化该字段（而非默认的 unmanaged 数组），并由生成器自动注册——属 CA2255 允许的源生成器场景。
 /// </summary>
-[MemoryPackable]
-public partial struct DeltaPacket
+public sealed class EntityDeltaArrayFormatterAttribute : MemoryPackCustomFormatterAttribute<EntityDeltaArrayFormatter, EntityDelta[]>
 {
-    public int BaseTick;
-    public int CurrTick;
-    public EntityState[] Spawned;
-    public EntityState[] Updated;
-    public int[] Despawned;
-}
-
-/// <summary>C→S 回执包，携带客户端已应用的最新 tick，作为服务器生成下一个 Delta 的基线。</summary>
-[MemoryPackable]
-public partial struct AckPacket
-{
-    public int LastAppliedTick;
-}
-
-/// <summary>双向优雅断开包，携带原因便于对端日志与清理。</summary>
-[MemoryPackable]
-public partial struct ByePacket
-{
-    public string Reason;
+    public override EntityDeltaArrayFormatter GetFormatter() => new();
 }

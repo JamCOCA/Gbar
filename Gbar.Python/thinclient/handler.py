@@ -10,7 +10,7 @@ from Gbar.Net.Protocol import IPacketHandler  # type: ignore[import]
 
 from .events import ClientEvents
 from .recorder import PacketLogger
-from .state import WorldState, fmt_entity
+from .state import WorldState, fmt_entity, fmt_delta
 
 log = logging.getLogger("ThinClient")
 
@@ -79,7 +79,7 @@ class ClientPacketHandler(IPacketHandler):
         for e in packet.Spawned:
             self.packets.detail("+ " + fmt_entity(e))
         for e in packet.Updated:
-            self.packets.detail("~ " + fmt_entity(e))
+            self.packets.detail("~ " + fmt_delta(e))
         for net_id in packet.Despawned:
             self.packets.detail(f"- netId={net_id}")
         if packet.CurrTick <= local:

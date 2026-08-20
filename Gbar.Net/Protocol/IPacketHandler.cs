@@ -1,4 +1,6 @@
-﻿namespace Gbar.Net.Protocol;
+﻿using Gbar.Net.Protocol.Packets;
+
+namespace Gbar.Net.Protocol;
 
 /// <summary>
 /// 包分发回调接口。服务器实现 C→S 方向（OnHello/OnAck/OnBye），

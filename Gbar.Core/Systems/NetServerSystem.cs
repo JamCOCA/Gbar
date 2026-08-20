@@ -5,6 +5,7 @@ using Gbar.Core.Components.Spatial;
 using Gbar.Core.Logging;
 using Gbar.Core.Net;
 using Gbar.Net.Protocol;
+using Gbar.Net.Protocol.Packets;
 using Gbar.Net.Server;
 
 namespace Gbar.Core.Systems;

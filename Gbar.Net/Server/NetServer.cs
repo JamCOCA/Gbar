@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using Gbar.Net.Protocol;
+using Gbar.Net.Protocol.Packets;
 using LiteNetLib;
 
 namespace Gbar.Net.Server;

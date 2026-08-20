@@ -3,6 +3,7 @@ using Gbar.Core.Components.Identity;
 using Gbar.Core.Components.Spatial;
 using Gbar.Core.Net;
 using Gbar.Net.Protocol;
+using Gbar.Net.Protocol.Packets;
 using Gbar.Net.Server;
 
 namespace Gbar.Core.Systems;
@@ -119,13 +120,20 @@ public sealed class NetSyncSystem : FixedSystem
     private void SendDelta(NetServer net, ClientSession session, int tick)
     {
         var spawned = new List<EntityState>();
-        var updated = new List<EntityState>();
+        var updated = new List<EntityDelta>();
         var despawned = new List<int>();
 
         foreach (var (netId, st) in _current)
         {
-            if (!session.LastSent.TryGetValue(netId, out var old)) spawned.Add(st);
-            else if (!Same(old, st)) updated.Add(st);
+            if (!session.LastSent.TryGetValue(netId, out var old))
+            {
+                spawned.Add(st);
+            }
+            else
+            {
+                var delta = DiffEntity(st, old);
+                if (delta.Mask != 0) updated.Add(delta);
+            }
         }
         foreach (var netId in session.LastSent.Keys)
             if (!_current.ContainsKey(netId)) despawned.Add(netId);
@@ -146,8 +154,19 @@ public sealed class NetSyncSystem : FixedSystem
         foreach (var (netId, st) in _current) session.LastSent[netId] = st;
     }
 
-    private static bool Same(in EntityState a, in EntityState b) =>
-        a.SpaceNetId == b.SpaceNetId &&
-        a.PosX == b.PosX && a.PosY == b.PosY && a.PosZ == b.PosZ &&
-        a.VelX == b.VelX && a.VelY == b.VelY && a.VelZ == b.VelZ;
+    /// <summary>按字段比较，生成只含变化字段的增量；无变化返回 <see cref="EntityDelta.Mask"/> = 0。</summary>
+    private static EntityDelta DiffEntity(in EntityState cur, in EntityState old)
+    {
+        var d = new EntityDelta { NetId = cur.NetId };
+        byte mask = 0;
+        if (cur.SpaceNetId != old.SpaceNetId) { mask |= (byte)EntityFields.SpaceNetId; d.SpaceNetId = cur.SpaceNetId; }
+        if (cur.PosX != old.PosX) { mask |= (byte)EntityFields.PosX; d.PosX = cur.PosX; }
+        if (cur.PosY != old.PosY) { mask |= (byte)EntityFields.PosY; d.PosY = cur.PosY; }
+        if (cur.PosZ != old.PosZ) { mask |= (byte)EntityFields.PosZ; d.PosZ = cur.PosZ; }
+        if (cur.VelX != old.VelX) { mask |= (byte)EntityFields.VelX; d.VelX = cur.VelX; }
+        if (cur.VelY != old.VelY) { mask |= (byte)EntityFields.VelY; d.VelY = cur.VelY; }
+        if (cur.VelZ != old.VelZ) { mask |= (byte)EntityFields.VelZ; d.VelZ = cur.VelZ; }
+        d.Mask = mask;
+        return d;
+    }
 }
