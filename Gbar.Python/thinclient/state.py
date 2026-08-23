@@ -8,6 +8,8 @@ import threading
 from dataclasses import dataclass
 
 from .config import FIXED_SCALE
+from .celestial_index import CelestialIndex
+from .orbital import resolve_bodies
 
 # EntityFields 掩码位（与 C# Gbar.Net.Protocol.EntityFields 保持一致）
 F_SPACE = 1 << 0
@@ -70,12 +72,52 @@ class EntityView:
 
 
 @dataclass(frozen=True)
+class CelestialBody:
+    """天体静态根数（Galaxy 包下发），位置由轨道解析按 tick 现算，不进快照。"""
+
+    net_id: int
+    parent_net_id: int  # 母天体 NetId；-1 = 恒星（轨道中心）
+    mu: float
+    surface_radius: float
+    soi_radius: float
+    angular_velocity: float
+    initial_rotation: float
+    semi_major_axis: float
+    eccentricity: float
+    orbital_period: float
+    initial_phase: float
+
+    @classmethod
+    def from_state(cls, b) -> "CelestialBody":
+        return cls(
+            b.NetId, b.ParentNetId, b.Mu, b.SurfaceRadius, b.SoiRadius,
+            b.AngularVelocity, b.InitialRotation, b.SemiMajorAxis,
+            b.Eccentricity, b.OrbitalPeriod, b.InitialPhase,
+        )
+
+
+@dataclass(frozen=True)
+class CelestialView:
+    """天体在某一 tick 的解析视图（米制绝对位置 + 半径 + 恒星标记）。"""
+
+    net_id: int
+    parent_net_id: int
+    surface_radius: float
+    soi_radius: float
+    x: float
+    y: float
+    z: float
+
+
+@dataclass(frozen=True)
 class WorldSnapshot:
     """WorldState 的一致性副本，供 UI / 测试钩子消费。"""
 
     tick: int
     player_net_id: int
     entities: dict  # NetId -> EntityView
+    tick_rate: int
+    bodies: dict  # NetId -> CelestialBody
 
 
 class WorldState:
@@ -84,12 +126,38 @@ class WorldState:
     def __init__(self):
         self._lock = threading.Lock()
         self._entities = {}  # NetId -> EntityView
+        self._bodies = {}  # NetId -> CelestialBody
+        self.index = CelestialIndex()  # 天体引力系索引（与实体分离）
         self.last_applied_tick = 0  # 已应用的最新快照 tick（快照基线，仅由 Keyframe/Delta 推进）
         self.player_net_id = 0
+        self.tick_rate = 0  # 服务器 tick/s（Welcome 下发，用于天体轨道求值）
 
-    def set_player(self, net_id: int):
+    def set_welcome(self, tick_rate: int, player_net_id: int):
         with self._lock:
-            self.player_net_id = net_id
+            self.tick_rate = tick_rate
+            self.player_net_id = player_net_id
+
+    def set_galaxy(self, bodies) -> None:
+        """星图表：一次性存储全部天体根数（Galaxy 包）并重建引力系索引。"""
+        with self._lock:
+            self._bodies = {b.NetId: CelestialBody.from_state(b) for b in bodies}
+            view = list(self._bodies.values())
+        self.index.set_bodies(view)
+
+    def resolve_celestials(self, tick: int) -> dict:
+        """按父链递归求各天体在指定 tick 的绝对位置，返回 {NetId: CelestialView}，并刷新引力系索引。"""
+        with self._lock:
+            bodies = dict(self._bodies)
+            rate = self.tick_rate
+        if not bodies or rate <= 0:
+            return {}
+        positions = resolve_bodies(bodies.values(), tick, rate)
+        self.index.rebuild_positions(positions)
+        return {
+            net_id: CelestialView(b.net_id, b.parent_net_id, b.surface_radius, b.soi_radius,
+                                  positions[net_id][0], positions[net_id][1], positions[net_id][2])
+            for net_id, b in bodies.items()
+        }
 
     def apply_keyframe(self, tick: int, entities) -> None:
         """全量快照：重建实体表。"""
@@ -127,4 +195,7 @@ class WorldState:
 
     def snapshot(self) -> WorldSnapshot:
         with self._lock:
-            return WorldSnapshot(self.last_applied_tick, self.player_net_id, dict(self._entities))
+            return WorldSnapshot(
+                self.last_applied_tick, self.player_net_id, dict(self._entities),
+                self.tick_rate, dict(self._bodies),
+            )

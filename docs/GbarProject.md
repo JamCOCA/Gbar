@@ -2,30 +2,60 @@
 
 基于 [Arch](https://arch-ecs.gitbook.io/arch) ECS 框架的游戏服务器。核心设计：**查询内并行计算 + 结构变更延迟回放**。
 
-相关文档：[GbarMotion.md](GbarMotion.md)（坐标/物理/运动方案）、[GbarSystems.md](GbarSystems.md)（系统清单与查询）、[GbarNet.md](GbarNet.md)（网络同步）、[arch-core.md](arch-core.md) / [arch-systems.md](arch-systems.md)（Arch 框架参考）
+相关文档：[GbarMotion.md](GbarMotion.md)（坐标/物理/运动方案）、[GbarSystems.md](GbarSystems.md)（系统清单与查询）、[GbarNet.md](GbarNet.md)（网络同步）、[Arch/arch-core.md](Arch/arch-core.md) / [Arch/arch-systems.md](Arch/arch-systems.md)（Arch 框架参考）
 
 ## 目录结构
 
 ```
 Gbar/
-├── Gbar.Core/                        服务器核心库
-│   ├── GameServer.cs                 调度核心：持有 World、驱动主循环
+├── Gbar.Core/                        服务器核心库（ECS）
+│   ├── GameServer.cs                 调度核心：持有 World、驱动主循环、StartNet/持久化
 │   ├── CommandBufferHub.cs           CommandBuffer 持有包装（线程安全写入）
 │   ├── Components/                   组件定义（一组件一文件，按功能分二级目录）
 │   │   ├── Spatial/                  坐标域：Global/Local Position/Velocity + ParentRef
-│   │   ├── Physics/                  物理：Mass、Force（将改 Impulse）
+│   │   ├── Physics/                  物理：Mass、Force
 │   │   ├── Celestial/                天体：Celestial（引力/自转）、Orbit（公转根数）
 │   │   └── Identity/                 标识：NetworkId、PlayerTag
-│   ├── Maths/Fix.cs                  定点数换算工具（long，1:100）
+│   ├── Maths/                      定点与确定性数学：Fix.cs（long，1:100）、DetTrig.cs（只用 +−×÷ 的确定性三角函数）
+│   ├── Logging/                      日志：Log + ISink + FileSink/LevelFilterSink
+│   ├── Net/ClientRegistry.cs         连接会话 + NetId 分配（仅主循环线程访问）
+│   ├── Persistence/                  持久化：IPersistenceProvider + JsonPersistenceProvider + EntitySnapshot
 │   ├── SystemGroup/                  变步长/定步长两个系统组（各持有 Commands）
 │   └── Systems/
 │       ├── Base/                     FixedSystem / UpdateSystem 自注册基类 + SystemOrder 特性
-│       └── MovementSystem.cs         系统标准模板（参考实现）
+│       ├── OrbitalSystem.cs          天体公转/自转历元解析（定步长 Order 10，DetTrig 确定性开普勒求解）
+│       ├── MoveSystem.cs             位置积分（定步长 Order 60，唯一位置写入点）
+│       ├── NetServerSystem.cs        握手/连接生命周期（变步长 Order 0）
+│       └── NetSyncSystem.cs          快照/增量同步（定步长 Order 120）
 │
-├── Gbar.Net/                         协议 DTO + NetServer/NetClient（LiteNetLib、MemoryPack）
+├── Gbar.Net/                         传输层（LiteNetLib + MemoryPack，不依赖 Gbar.Core）
+│   ├── Client/NetClient.cs           客户端封装 + 分片发送/重组 + 字节统计
+│   ├── Server/                       服务器封装
+│   │   ├── NetServer.cs              事件队列 + 分片发送/重组
+│   │   └── NetEvent.cs               网络事件定义
+│   └── Protocol/                     协议编解码 + 分发
+│       ├── Packets/                  包体结构（命名空间 Gbar.Net.Protocol.Packets）
+│       │   ├── EntityState.cs        实体完整状态（56 B）
+│       │   ├── EntityDelta.cs        字段级增量 + EntityFields 脏掩码
+│       │   ├── CelestialState.cs     天体静态定义
+│       │   └── *.cs                  各包：Galaxy/Hello/Welcome/Keyframe/Delta/Ack/Bye
+│       ├── Packets.cs                序列化 formatter（EntityDelta 字段掩码）
+│       ├── PacketCodec.cs            编解码 + 分发 + 通道选择 + 压缩/分片
+│       ├── PacketType.cs             包类型枚举
+│       ├── IPacketHandler.cs         分发回调接口（C#/pythonnet 共享）
+│       ├── PacketCompressor.cs       包级压缩钩子（默认不压缩）
+│       └── FragmentAssembler.cs      分片重组器（按 MessageId 顺序累积）
+│
 ├── Gbar.App/                         启动入口：创建服务器、注册系统、接线
-├── Gbar.Client/                      控制台测试客户端
-└── docs/
+│   ├── Program.cs                    入口（new App → Init → Debug → Start → Quit）
+│   ├── App.cs                        生命周期封装 + 调试注入点
+│   └── Logging/ConsoleSink.cs        控制台日志 Sink
+│
+├── Gbar.Python/                      Python 测试客户端（pythonnet 加载 Gbar.Net）
+│   ├── ThinClient.py                 入口（带 UI / --no-ui 无界面压测）
+│   └── thinclient/                   client/handler/state/recorder/ui/events/config
+│
+└── docs/                             文档（含 Arch/ 框架参考）
 ```
 
 ## 核心原则
@@ -36,40 +66,57 @@ Gbar/
 
 ## 主循环
 
-后台单线程，默认 20 tick/s，同步阻塞等 `PeriodicTimer` 节拍：
+`GameServer.Loop` 在后台单线程运行，默认 20 tick/s，`PeriodicTimer` 同步阻塞等节拍：
 
-- 每拍：实测 delta → 变步长组 1 次 → 累加器驱动定步长组 0~N 次（慢帧补帧，上限 5 次，补不过来丢弃防死亡螺旋）
-- 每步进结束立即 `Commands.Playback(world)` 回放结构变更
-- `JobScheduler` 钉在 Loop 线程创建/销毁，赋给 `World.SharedJobScheduler`
+- 每拍：实测 delta → 变步长组 1 次（`OnUpdate` → `BeforeUpdate`/`Update`/`AfterUpdate`）→ `Commands.Playback` 回放 → 累加器驱动定步长组 0~N 次（慢帧补帧，上限 5 次，补不过来丢弃防死亡螺旋）
+- 每次固定步进结束立即 `Commands.Playback(world)` 回放结构变更
+- `JobScheduler` 在 Loop 线程创建/销毁，赋给 `World.SharedJobScheduler`（Arch 的 ParallelQuery 依赖它，且只能在创建线程调用）
+- `StopAsync` 先取消循环并等待退出，再断网、遍历 World 持久化（保证无线程竞争）
 
 ## 系统写法规范
 
 ```csharp
-[SystemOrder(0)]
-public sealed partial class MovementSystem : FixedSystem
+[SystemOrder(60)]
+public sealed partial class MoveSystem : FixedSystem
 {
-    public MovementSystem(GameServer server) : base(server) { }
+    public MoveSystem(GameServer server) : base(server) { }
+
+    public override void Update(in float delta)
+    {
+        MoveGlobalQuery(World);   // 手动调用源码生成器生成的查询入口（并行）
+        MoveLocalQuery(World);
+    }
 
     [Query(Parallel = true)]
-    [All<Position, Velocity>]
-    private static void Move([Data] in float delta, ref Position position, in Velocity velocity)
+    [All<GlobalPosition, GlobalVelocity>]
+    private static void MoveGlobal(ref GlobalPosition position, in GlobalVelocity velocity)
     {
-        position.X += velocity.X * delta;
-        position.Y += velocity.Y * delta;
+        position.X += velocity.X;
+        position.Y += velocity.Y;
+        position.Z += velocity.Z;
     }
 }
 ```
 
-- `partial` 类 + `[Query]` 静态方法，`Update` 由源码生成器生成；`Program.cs` 里 `RegisterSystems()` 反射自动注册
-- 并行查询方法必须 `static`；结构变更经基类静态字段 `Commands` 记录
-- 线程安全：读写自己的组件安全；写 `Commands` 安全；直接结构变更禁止
+- `partial` 类 + `[Query]` 静态方法，源码生成器生成 `<方法名>Query(World)` 入口，**需在 `Update` 里手动调用**（生成器不自动挂进 `Update`）
+- `[All<T>]`/`[Any<T>]`/`[None<T>]` 定义查询过滤器；方法签名决定传入的组件；`Parallel = true` 启用并行调度
+- `FixedSystem`/`UpdateSystem` 基类构造时自注册；`RegisterSystems()` 反射扫描并实例化
+- 并行查询方法必须 `static`；结构变更经基类静态字段 `Commands` 记录，禁止在查询内直接 Create/Destroy
 - 20 tick/s 下每帧预算 50ms；并行查询有调度开销，实体量小（几百）时不必开 `Parallel`
 
-启动入口：
+## 启动流程
 
 ```csharp
-var server = new GameServer(tickRate: 20);
-server.RegisterSystems();   // 反射自动注册所有系统（[SystemOrder] 控制顺序）
-server.Initialize();
-server.Start();
+var app = new App();
+await app.InitAsync();   // 配置日志 → GameServer(20) → 持久化 → RegisterSystems → StartNet(9050) → Initialize → LoadAsync
+app.Debug();             // 调试注入点：主循环启动前直接写 World 注入测试实体
+app.Start();             // 启动主循环 + 状态汇报任务
+await app.WaitForQuitAsync();
+await app.QuitAsync();   // StopAsync（自动持久化）→ 释放
 ```
+
+## 网络同步要点
+
+- 服务器权威，新连接**关键帧对齐一次**，之后每 tick 收**增量（Delta）**（详见 [GbarNet.md](GbarNet.md)）
+- `Delta.Updated` 为字段级增量：`EntityDelta` 按 `EntityFields` 掩码只发变化字段，由 `Packets.cs` 里的 formatter 手写序列化
+- 分片/压缩在传输层统一处理（`PacketCodec` + `FragmentAssembler` + `PacketCompressor`），业务协议无感知

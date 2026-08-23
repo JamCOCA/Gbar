@@ -3,7 +3,9 @@
 模块划分：
     _bootstrap  pythonnet 运行时初始化（必须最先执行，由本 __init__ 触发）
     config      常量（地址 / 定点缩放 / UI 参数）
-    state       线程安全的世界视图（EntityView / WorldSnapshot / WorldState）
+    state       线程安全的世界视图（EntityView / CelestialBody / WorldSnapshot / WorldState）
+    orbital     天体 on-rails 解析（与服务器 DetTrig + OrbitalSystem 逐 bit 一致）
+    celestial_index  天体引力系索引（层级 + 行星范围空间哈希，与实体分离）
     recorder    收包记录器（全量写 log.txt，内存留最近 N 条供 UI）
     events      注入点（生命周期钩子列表）
     handler     协议层（IPacketHandler 实现，依赖 Gbar.Net）

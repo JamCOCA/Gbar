@@ -90,7 +90,10 @@ public sealed class NetServerSystem : UpdateSystem, IPacketHandler
     public void OnAck(AckPacket packet)
     {
         if (Server.ClientRegistry!.TryGet(_currentClientId, out var session))
+        {
             session.BaselineTick = packet.LastAppliedTick;
+            session.Synced = true;   // 首次 Ack 确认 Keyframe 已应用，服务器切换到 Delta
+        }
     }
 
     public void OnBye(ByePacket packet)
@@ -104,6 +107,7 @@ public sealed class NetServerSystem : UpdateSystem, IPacketHandler
     public void OnKeyframe(KeyframePacket packet) { }
     public void OnDelta(DeltaPacket packet) { }
 
+    // <summary>创建玩家Entity，后续修改加载方式，目前直接原点初始化</summary>
     private Entity CreatePlayerEntity(int netId)
     {
         var world = Server.World;
@@ -146,7 +150,7 @@ public sealed class NetServerSystem : UpdateSystem, IPacketHandler
                 SurfaceRadius = body.SurfaceRadius,
                 SoiRadius = body.SoiRadius,
                 AngularVelocity = body.AngularVelocity,
-                InitialRotation = body.Rotation,        // 约定：tick=0 的相位；OrbitalSystem 落地后统一 epoch 口径
+                InitialRotation = body.InitialRotation,     // 历元相位；客户端按 InitialRotation + AngularVelocity × tick 解析
             };
             if (world.TryGet<Orbit>(e, out var orbit))
             {

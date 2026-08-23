@@ -18,7 +18,10 @@ public struct Celestial
     /// </summary>
     public double SoiRadius;
 
-    /// <summary>当前自转角（弧度）。</summary>
+    /// <summary>历元自转角（弧度，tick=0 时的相位），加载后不变。</summary>
+    public float InitialRotation;
+
+    /// <summary>当前自转角（弧度），由 OrbitalSystem 按 InitialRotation + AngularVelocity × tick 历元解析推进。</summary>
     public float Rotation;
 
     /// <summary>自转角速度（rad/tick）。</summary>

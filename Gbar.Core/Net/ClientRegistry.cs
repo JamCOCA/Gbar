@@ -18,7 +18,7 @@ public sealed class ClientSession
     /// <summary>玩家本体实体（PlayerTag + NetworkId + 坐标组件）。</summary>
     public Entity PlayerEntity = Entity.Null;
 
-    /// <summary>是否已发送过 Keyframe。</summary>
+    /// <summary>是否已通过 Ack 对齐（客户端已应用 Keyframe，服务器可发 Delta）。</summary>
     public bool Synced;
 
     /// <summary>上次发送 Keyframe 的 tick，用于周期纠偏调度。</summary>

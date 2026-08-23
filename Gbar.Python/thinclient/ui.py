@@ -19,12 +19,13 @@ from .state import EntityView, WorldSnapshot
 class ClientUI:
     CANVAS_W, CANVAS_H = 720, 560
     LOG_H = 10  # 日志面板行数
-    MIN_SPAN = 10.0  # 视野最小跨度（米），防止空场景时除以零
 
     def __init__(self, client: ThinClient):
         self._client = client
         self._selected_net_id = None  # 监视栏当前选中的实体
+        self._selected_body_id = None  # 监视栏当前选中的天体（cele）
         self._entity_ids = []  # 列表行号 → NetId 映射
+        self._body_ids = []  # 天体列表行号 → NetId 映射
         self._log_revision = -1  # 已渲染的日志版本号
         self._net_last_time = time.monotonic()  # 网速采样基准时间
         self._net_last_sent = 0                  # 采样起点的累计发送字节
@@ -40,13 +41,35 @@ class ClientUI:
         self._canvas = tk.Canvas(self._root, width=self.CANVAS_W, height=self.CANVAS_H, bg="#101418")
         self._canvas.grid(row=0, column=0, sticky="nsew")
 
+        # 矢量视图状态：px/m 缩放 + 世界中心；scale=None 表示自动适配视野
+        self._view_scale = None
+        self._view_cx = 0.0
+        self._view_cy = 0.0
+        self._drag = None  # 拖拽起点 (x, y)
+        self._show_soi = True  # 是否绘制 SOI 圈（g 键切换）
+        self._canvas.bind("<Button-1>", self._on_press)
+        self._canvas.bind("<B1-Motion>", self._on_drag)
+        self._canvas.bind("<ButtonRelease-1>", self._on_release)
+        self._canvas.bind("<MouseWheel>", self._on_wheel)
+        self._canvas.bind("<Double-Button-1>", self._on_double)
+        self._canvas.bind("<Button-4>", lambda e: self._zoom_at(e.x, e.y, 1.2))
+        self._canvas.bind("<Button-5>", lambda e: self._zoom_at(e.x, e.y, 1 / 1.2))
+        self._canvas.bind("<KeyPress-g>", lambda _e: self._toggle_soi())
+        self._canvas.focus_set()
+
         right = tk.Frame(self._root, bg="#181c22")
         right.grid(row=0, column=1, sticky="ns")
         self._info = tk.Label(right, justify=tk.LEFT, anchor="nw", bg="#181c22", fg="#d7dce2",
                               font=("Consolas", 10), padx=10, pady=6)
         self._info.pack(fill=tk.X)
+        tk.Label(right, text="Bodies", bg="#181c22", fg="#8a94a2", font=("Consolas", 9)).pack(anchor="w", padx=10)
+        self._body_listbox = tk.Listbox(right, width=30, height=5, bg="#101418", fg="#d7dce2",
+                                        font=("Consolas", 10), selectbackground="#2d3a4a",
+                                        highlightthickness=0, activestyle="none")
+        self._body_listbox.pack(fill=tk.X, padx=10)
+        self._body_listbox.bind("<<ListboxSelect>>", self._on_select_body)
         tk.Label(right, text="Entities", bg="#181c22", fg="#8a94a2", font=("Consolas", 9)).pack(anchor="w", padx=10)
-        self._listbox = tk.Listbox(right, width=30, height=10, bg="#101418", fg="#d7dce2",
+        self._listbox = tk.Listbox(right, width=30, height=5, bg="#101418", fg="#d7dce2",
                                    font=("Consolas", 10), selectbackground="#2d3a4a",
                                    highlightthickness=0, activestyle="none")
         self._listbox.pack(fill=tk.X, padx=10)
@@ -78,33 +101,94 @@ class ClientUI:
 
     def _refresh(self):
         snap = self._client.state.snapshot()
-        self._draw(snap)
-        self._update_info(snap)
+        planets = self._client.state.resolve_celestials(snap.tick)
+        self._draw(snap, planets)
+        self._update_info(snap, planets)
+        self._update_body_list(snap)
         self._update_entity_list(snap)
-        self._update_inspector(snap)
+        self._update_inspector(snap, planets)
         self._update_log()
         self._root.after(UI_REFRESH_MS, self._refresh)
 
+    # ---- 视图变换（矢量缩放 / 拖拽） ----
+
+    def _ensure_fit(self, snap: WorldSnapshot, planets: dict):
+        if self._view_scale is not None:
+            return
+        xs = [e.x for e in snap.entities.values()] + [p.x for p in planets.values()]
+        ys = [e.y for e in snap.entities.values()] + [p.y for p in planets.values()]
+        if not xs:
+            return
+        w = max(max(xs) - min(xs), 1.0)
+        h = max(max(ys) - min(ys), 1.0)
+        self._view_scale = min(self.CANVAS_W / w, self.CANVAS_H / h) * 0.9
+        self._view_cx = (min(xs) + max(xs)) / 2
+        self._view_cy = (min(ys) + max(ys)) / 2
+
+    def _on_press(self, event):
+        self._drag = (event.x, event.y)
+
+    def _on_drag(self, event):
+        if self._drag is None or self._view_scale is None:
+            return
+        dx = event.x - self._drag[0]
+        dy = event.y - self._drag[1]
+        self._drag = (event.x, event.y)
+        self._view_cx -= dx / self._view_scale
+        self._view_cy += dy / self._view_scale
+
+    def _on_release(self, _event):
+        self._drag = None
+
+    def _on_wheel(self, event):
+        self._zoom_at(event.x, event.y, 1.2 if event.delta > 0 else 1 / 1.2)
+
+    def _on_double(self, _event):
+        self._view_scale = None  # 下一帧重新自动适配视野
+
+    def _toggle_soi(self):
+        self._show_soi = not self._show_soi
+
+    def _zoom_at(self, sx, sy, factor):
+        """以屏幕点 (sx, sy) 为锚缩放：先反解世界坐标，缩放后回设使锚点不动。"""
+        if self._view_scale is None:
+            return
+        wx = (sx - self.CANVAS_W / 2) / self._view_scale + self._view_cx
+        wy = self._view_cy - (sy - self.CANVAS_H / 2) / self._view_scale
+        self._view_scale = max(1e-12, min(10.0, self._view_scale * factor))
+        self._view_cx = wx - (sx - self.CANVAS_W / 2) / self._view_scale
+        self._view_cy = wy + (sy - self.CANVAS_H / 2) / self._view_scale
+
     # ---- 画布 ----
 
-    def _draw(self, snap: WorldSnapshot):
+    def _draw(self, snap: WorldSnapshot, planets: dict):
         c = self._canvas
         c.delete("all")
-        if not snap.entities:
+        if not snap.entities and not planets:
             c.create_text(self.CANVAS_W / 2, self.CANVAS_H / 2, text="waiting for snapshot...",
                           fill="#5a6472", font=("Consolas", 14))
             return
-        # 自适应视野：以实体包围盒 + 10% 边距映射到画布
-        xs = [e.x for e in snap.entities.values()]
-        ys = [e.y for e in snap.entities.values()]
-        cx, cy = (min(xs) + max(xs)) / 2, (min(ys) + max(ys)) / 2
-        span = max(max(xs) - min(xs), max(ys) - min(ys), self.MIN_SPAN) * 1.1
-        half = span / 2
+        self._ensure_fit(snap, planets)
+        scale = self._view_scale
 
         def to_px(x, y):
-            px = (x - cx + half) / span * self.CANVAS_W
-            py = (cy + half - y) / span * self.CANVAS_H  # 世界 Y 向上，画布 Y 向下
-            return px, py
+            return ((x - self._view_cx) * scale + self.CANVAS_W / 2,
+                    (self._view_cy - y) * scale + self.CANVAS_H / 2)
+
+        # 行星层（cele，与 entity 分离）：SOI 圈 + 星体
+        for p in planets.values():
+            px, py = to_px(p.x, p.y)
+            if self._show_soi and p.parent_net_id != -1:
+                r = p.soi_radius * scale
+                if r > 1.0:
+                    c.create_oval(px - r, py - r, px + r, py + r, outline="#33506b", dash=(2, 4))
+        for p in planets.values():
+            px, py = to_px(p.x, p.y)
+            r = min(max(p.surface_radius * scale, 3.0), 24.0)
+            color = "#ffd54f" if p.parent_net_id == -1 else "#90a4ae"
+            c.create_oval(px - r, py - r, px + r, py + r, fill=color, outline="")
+            c.create_text(px, py - r - 6, text=str(p.net_id), fill="#cfd8dc",
+                          font=("Consolas", 8))
 
         for e in snap.entities.values():
             px, py = to_px(e.x, e.y)
@@ -115,6 +199,9 @@ class ClientUI:
             c.create_oval(px - r, py - r, px + r, py + r, fill=color, outline="")
             c.create_text(px + 10, py, text=str(e.net_id), fill="#8a94a2", anchor="w", font=("Consolas", 8))
             c.create_line(px, py, *to_px(e.x + e.vx, e.y + e.vy), fill=color, arrow=tk.LAST)
+
+        c.create_text(6, self.CANVAS_H - 6, text="drag=pan  wheel=zoom  dblclick=fit  g=soi",
+                      fill="#5a6472", anchor="sw", font=("Consolas", 8))
 
     # ---- 信息与监视栏 ----
 
@@ -132,7 +219,7 @@ class ClientUI:
             return f"{bps / 1024:.2f} KB/s"
         return f"{bps:.1f} B/s"
 
-    def _update_info(self, snap: WorldSnapshot):
+    def _update_info(self, snap: WorldSnapshot, planets: dict):
         now = time.monotonic()
         elapsed = now - self._net_last_time
         if elapsed >= self.NET_SAMPLE_S:
@@ -143,11 +230,20 @@ class ClientUI:
             self._net_last_time = now
             self._net_last_sent = sent
             self._net_last_recv = recv
+        # 玩家当前引力源（引力系索引查询）
+        gravity = "—"
+        player = snap.entities.get(snap.player_net_id)
+        if player is not None and planets:
+            src = self._client.state.index.soi_at(player.x, player.y, player.z)
+            if src is not None:
+                gravity = f"netId={src.net_id}"
         self._info.config(
             text=(
                 f"tick      {snap.tick}\n"
                 f"entities  {len(snap.entities)}\n"
+                f"bodies    {len(snap.bodies)}\n"
                 f"player    netId={snap.player_net_id}\n"
+                f"gravity   {gravity}\n"
                 f"up        {self._fmt_rate(self._net_up)}\n"
                 f"down      {self._fmt_rate(self._net_down)}"
             )
@@ -167,8 +263,66 @@ class ClientUI:
     def _on_select(self, _event):
         sel = self._listbox.curselection()
         self._selected_net_id = self._entity_ids[sel[0]] if sel else None
+        if self._selected_net_id is not None:
+            self._selected_body_id = None
+            self._body_listbox.selection_clear(0, tk.END)
 
-    def _update_inspector(self, snap: WorldSnapshot):
+    def _on_select_body(self, _event):
+        sel = self._body_listbox.curselection()
+        self._selected_body_id = self._body_ids[sel[0]] if sel else None
+        if self._selected_body_id is not None:
+            self._selected_net_id = None
+            self._listbox.selection_clear(0, tk.END)
+
+    @staticmethod
+    def _body_name(b, snap: WorldSnapshot) -> str:
+        if b.parent_net_id == -1:
+            return f"Star   #{b.net_id}"
+        if any(o.parent_net_id == b.net_id for o in snap.bodies.values()):
+            return f"Planet #{b.net_id}"
+        return f"Moon   #{b.net_id}"
+
+    def _update_body_list(self, snap: WorldSnapshot):
+        ids = sorted(snap.bodies)
+        if ids == self._body_ids:
+            return  # 列表无变化，避免重绘打断选择
+        self._body_ids = ids
+        self._body_listbox.delete(0, tk.END)
+        for net_id in ids:
+            self._body_listbox.insert(tk.END, self._body_name(snap.bodies[net_id], snap))
+        if self._selected_body_id in ids:
+            self._body_listbox.selection_set(ids.index(self._selected_body_id))
+
+    @staticmethod
+    def _body_info(b, view, snap: WorldSnapshot) -> str:
+        if b.parent_net_id == -1:
+            kind = "Star"
+        elif any(o.parent_net_id == b.net_id for o in snap.bodies.values()):
+            kind = "Planet"
+        else:
+            kind = "Moon"
+        soi = "∞" if b.soi_radius > 1e100 else f"{b.soi_radius:.6g} m"
+        lines = [
+            f"{kind} #{b.net_id}",
+            f"netId   {b.net_id}",
+            f"parent  {b.parent_net_id}",
+        ]
+        if view is not None:
+            lines.append(f"pos     ({view.x:.3e}, {view.y:.3e}, {view.z:.3e})")
+        lines.append(f"radius  {b.surface_radius:.6g} m")
+        lines.append(f"soi     {soi}")
+        lines.append(f"mu      {b.mu:.6g}")
+        if b.parent_net_id != -1:
+            lines.append(f"orbit   a={b.semi_major_axis:.6g} e={b.eccentricity:.4g}")
+            lines.append(f"        T={b.orbital_period:.6g}s phase={b.initial_phase:.4g}")
+        return "\n".join(lines)
+
+    def _update_inspector(self, snap: WorldSnapshot, planets: dict):
+        if self._selected_body_id is not None:
+            b = snap.bodies.get(self._selected_body_id)
+            if b is not None:
+                self._inspector.config(text=self._body_info(b, planets.get(b.net_id), snap))
+                return
         e = snap.entities.get(self._selected_net_id) if self._selected_net_id is not None else None
         if e is None:
             e = snap.entities.get(snap.player_net_id)  # 未选中时默认监视玩家

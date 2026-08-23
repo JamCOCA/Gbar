@@ -43,7 +43,7 @@ class ClientPacketHandler(IPacketHandler):
 
     def OnWelcome(self, packet):
         # ServerTick 仅用于两端 tick 对时（天体轨道求值基准），不是快照基线，不得覆盖
-        self.state.set_player(packet.PlayerNetId)
+        self.state.set_welcome(packet.TickRate, packet.PlayerNetId)
         self.handshake_done.set()
         self.packets.record(
             packet.ServerTick, "S→C", "Welcome",
@@ -55,7 +55,12 @@ class ClientPacketHandler(IPacketHandler):
         tick = self.state.snapshot().tick
         self.packets.record(tick, "S→C", "Galaxy", f"bodies={len(packet.Bodies)}")
         for body in packet.Bodies:
-            self.packets.detail(f"netId={body.NetId} parent={body.ParentNetId} mu={body.Mu:.3g}")
+            self.packets.detail(
+                f"netId={body.NetId} parent={body.ParentNetId} mu={body.Mu:.3g}"
+                f" a={body.SemiMajorAxis:.4g} e={body.Eccentricity:.4g}"
+                f" T={body.OrbitalPeriod:.4g}s phase={body.InitialPhase:.4g} soi={body.SoiRadius:.4g}"
+            )
+        self.state.set_galaxy(packet.Bodies)
         self.events.emit(self.events.on_galaxy, packet)
 
     def OnKeyframe(self, packet):

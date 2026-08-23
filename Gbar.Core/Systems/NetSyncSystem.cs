@@ -1,4 +1,5 @@
 using Arch.Core;
+using Gbar.Core.Components.Celestial;
 using Gbar.Core.Components.Identity;
 using Gbar.Core.Components.Spatial;
 using Gbar.Core.Net;
@@ -10,15 +11,17 @@ namespace Gbar.Core.Systems;
 
 /// <summary>
 /// 网络同步系统（定步长，Order 120）：每 tick 末收集所有同步实体的状态，
-/// 对未对齐的连接发 Keyframe，对已对齐的连接按相对基线 diff 发 Delta。
+/// 对未对齐的连接（尚未收到 Ack）每 tick 重发 Keyframe，对已对齐的连接按相对基线 diff 发 Delta。
 /// 周期纠偏：每 <see cref="GameServer.KeyframeIntervalTicks"/> tick 重发一次 Keyframe，
 /// 各连接按 (tick + ClientId) 取模错开相位，平均每 tick 只有 1/interval 的连接收 Keyframe。
+/// 对齐状态（Synced/BaselineTick）只由客户端 Ack 驱动（NetServerSystem.OnAck），
+/// Keyframe 发送本身不置位，避免 Sequenced Delta 抢在 Keyframe 之前造成"基线空洞"。
 /// 天体（Celestial）不在此列——其位置由客户端按根数 + tick 自行解析（见 GbarNet.md）。
 /// </summary>
 [SystemOrder(120)]
 public sealed class NetSyncSystem : FixedSystem
 {
-    private static readonly QueryDescription _globalQuery = new QueryDescription().WithAll<NetworkId, GlobalPosition>();
+    private static readonly QueryDescription _globalQuery = new QueryDescription().WithAll<NetworkId, GlobalPosition>().WithNone<Celestial>();
     private static readonly QueryDescription _localQuery = new QueryDescription().WithAll<NetworkId, ParentRef, LocalPosition>();
 
     private readonly Dictionary<int, EntityState> _current = new();
@@ -41,6 +44,15 @@ public sealed class NetSyncSystem : FixedSystem
             // 否则 Keyframe 会抢在 Welcome 之前发出，且快照里还没有玩家实体
             if (session.PlayerEntity == Entity.Null) continue;
 
+            // 未对齐（尚未收到首次 Ack）：每 tick 重发 Keyframe，直到客户端确认已应用。
+            // 否则 Sequenced 的 Delta 会抢在 ReliableOrdered 的 Keyframe 之前到达，
+            // 客户端以空基线丢包（"基线空洞"）。
+            if (!session.Synced)
+            {
+                SendKeyframe(net, session, tick);
+                continue;
+            }
+
             if (ShouldSendKeyframe(session, tick))
             {
                 SendKeyframe(net, session, tick);
@@ -51,7 +63,7 @@ public sealed class NetSyncSystem : FixedSystem
         }
     }
 
-    /// <summary>发送全量 Keyframe 并重置该连接的 diff 基线。</summary>
+    /// <summary>发送全量 Keyframe 并重置该连接的 diff 基线；对齐状态（Synced/BaselineTick）由 Ack 驱动（见 NetServerSystem.OnAck）。</summary>
     private void SendKeyframe(NetServer net, ClientSession session, int tick)
     {
         net.Send(session.ClientId, PacketType.Keyframe, new KeyframePacket
@@ -59,17 +71,14 @@ public sealed class NetSyncSystem : FixedSystem
             Tick = tick,
             Entities = _current.Values.ToArray(),
         });
-        session.Synced = true;
-        session.BaselineTick = tick;
         session.LastKeyframeTick = tick;
         session.LastSent.Clear();
         foreach (var (netId, st) in _current) session.LastSent[netId] = st;
     }
 
-    /// <summary>是否该发 Keyframe：首次对齐必发；之后按间隔周期纠偏，相位按 ClientId 错开。</summary>
+    /// <summary>是否该发周期纠偏 Keyframe：按间隔 + ClientId 相位错开。</summary>
     private bool ShouldSendKeyframe(ClientSession session, int tick)
     {
-        if (!session.Synced) return true;
         var interval = Server.KeyframeIntervalTicks;
         if (interval <= 0) return false;
         return tick - session.LastKeyframeTick >= interval && (tick + session.ClientId) % interval == 0;

@@ -1,5 +1,6 @@
 using Gbar.App.Logging;
 using Gbar.Core;
+using Gbar.Core.Components.Celestial;
 using Gbar.Core.Components.Identity;
 using Gbar.Core.Components.Spatial;
 using Gbar.Core.Logging;
@@ -63,6 +64,79 @@ public sealed class App : IDisposable
                 },
                 new GlobalVelocity { X = 1000, Y = 0, Z = 0 });
         }
+
+        // 天体测试：恒星 + 行星 + 卫星（on-rails，位置/自转由 OrbitalSystem 历元解析；Celestial 不进网络快照）
+        var star = world.Create(
+            new NetworkId { Value = registry.AllocNetId() },
+            new GlobalPosition(),
+            new Celestial
+            {
+                Mu = 1.3271244e20,
+                SurfaceRadius = 6.9634e8,
+                SoiRadius = double.MaxValue,   // 恒星无母天体，覆盖整个星系
+                InitialRotation = 0f,
+                AngularVelocity = 0.00001f,
+            });
+
+        var planet = world.Create(
+            new NetworkId { Value = registry.AllocNetId() },
+            new GlobalPosition(),
+            new Celestial
+            {
+                Mu = 3.9860044e14,
+                SurfaceRadius = 6.371e6,
+                SoiRadius = 9.25e8,
+                InitialRotation = 0.5f,
+                AngularVelocity = 0.0001f,
+            },
+            new Orbit
+            {
+                Parent = star,
+                SemiMajorAxis = 1.496e11,
+                Eccentricity = 0.0167,
+                OrbitalPeriod = 1200.0,   // 测试用短周期（20 min），便于观察轨道运动
+                InitialPhase = 0f,
+            });
+
+        world.Create(
+            new NetworkId { Value = registry.AllocNetId() },
+            new GlobalPosition(),
+            new Celestial
+            {
+                Mu = 4.282837e13,
+                SurfaceRadius = 3.3895e6,
+                SoiRadius = 5.77e8,
+                InitialRotation = 1.2f,
+                AngularVelocity = 0.00009f,
+            },
+            new Orbit
+            {
+                Parent = star,
+                SemiMajorAxis = 2.279e11,
+                Eccentricity = 0.0934,
+                OrbitalPeriod = 2000.0,   // 测试用短周期（~33 min）
+                InitialPhase = 2.0,
+            });
+
+        world.Create(
+            new NetworkId { Value = registry.AllocNetId() },
+            new GlobalPosition(),
+            new Celestial
+            {
+                Mu = 4.9048695e12,
+                SurfaceRadius = 1.7374e6,
+                SoiRadius = 6.62e7,
+                InitialRotation = 0f,
+                AngularVelocity = 0.0001f,
+            },
+            new Orbit
+            {
+                Parent = planet,
+                SemiMajorAxis = 3.844e8,
+                Eccentricity = 0.0549,
+                OrbitalPeriod = 240.0,    // 测试用短周期（4 min）
+                InitialPhase = 1.0,
+            });
     }
 
     /// <summary>启动：开启主循环、注册退出信号并启动状态汇报任务。</summary>
