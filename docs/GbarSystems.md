@@ -27,10 +27,10 @@
 | Order | 系统 | 职责一句话 | 状态 |
 |---|---|---|---|
 | 10 | `OrbitalSystem` | 推进星球公转自转 | **已实现** |
-| 20 | `GravitySystem` | 引力冲量入池 | 待实现 |
-| 30 | `ThrustSystem` | 推力冲量入池、扣燃料 | 待实现 |
+| 20 | `GravitySystem` | 引力冲量入池 | **已实现** |
+| 30 | `ThrustSystem` | 推力冲量入池、扣燃料 | **已实现** |
 | 40 | `DragSystem` | 大气阻力冲量入池 | 待实现 |
-| 50 | `ImpulseIntegrationSystem` | 冲量兑换速度，残差留池 | 待实现 |
+| 50 | `ImpulseIntegrationSystem` | 冲量兑换速度，残差留池 | **已实现** |
 | 60 | `MoveSystem` | 两域 `pos += v` | **已实现** |
 | 70 | `LocomotionSystem` | 着地实体球面位移 | 待实现 |
 | 80 | `GroundTransitionSystem` | 着地/飞行状态切换 | 待实现 |
@@ -82,37 +82,62 @@ public sealed partial class OrbitalSystem : FixedSystem
 
 **备注**：天体不挂 `Mass`/`Impulse`，不走力积分；位置由轨道参数直接解析。
 
-### 20 GravitySystem
+### 20 GravitySystem（已实现）
 
-**职责**：向飞行实体的 `Impulse` 池加入本 tick 引力冲量 `J = μ·m/(d²·R)`，方向朝唯一引力源（局部域 = 行星心；全局域 = 母恒星）。double 算，`Fix.FromDouble` 转回。
+**职责**：向飞行实体的 `Impulse` 池加入本 tick 引力冲量 `J = μ·m/(d²·R)`（R = TickRate），方向朝唯一引力源（局部域 = 行星心；全局域 = 母恒星）。double 算、`Fix.FromDouble` 转回定点。`Systems/GravitySystem.cs:19`。
 
-**查询**：
-
-```csharp
-[Query(Parallel = true)]
-[All<LocalPosition, ParentRef, Mass, Impulse>]   // 局部域：引力源 = Parent 行星
-private static void GravityLocal(ref Impulse impulse, in LocalPosition pos, in ParentRef parent, in Mass mass);
-
-[Query(Parallel = true)]
-[All<GlobalPosition, Mass, Impulse>]             // 全局域：引力源 = 母恒星
-private static void GravityGlobal(ref Impulse impulse, in GlobalPosition pos, in Mass mass);
-```
-
-**备注**：`μ` 从引力源的 `Celestial` 只读获取（`World.Get<Celestial>(parent.Parent)`，并行只读安全）；着地实体无 `Mass`，天然不匹配。⏳ `Impulse` 待由 `Force` 重命名而来（见 50 节）。
-
-### 30 ThrustSystem
-
-**职责**：读推进组件的推力向量与朝向，每 tick 入池 `F/R`，同时扣燃料；燃料耗尽或玩法限速到达时停止输出。
-
-**查询**：
+**实现**：
 
 ```csharp
-[Query(Parallel = true)]
-[All<Thruster, Mass, Impulse>]   // ⏳ Thruster 待设计（推力、朝向、燃料关联）
-private static void Thrust(ref Thruster thruster, ref Impulse impulse, in Mass mass);
+[SystemOrder(20)]
+public sealed partial class GravitySystem : FixedSystem
+{
+    // 全局域唯一引力源 = 母恒星（None<Orbit>），位置/μ 静态，解析一次缓存
+    public override void Update(in float delta)
+    {
+        if (!_starResolved) ResolveStar();
+        GravityGlobalQuery(World);
+        GravityLocalQuery(World);
+    }
+
+    [Query(Parallel = true)]
+    [All<GlobalPosition, Mass, Impulse>]
+    private static void GravityGlobal(ref Impulse impulse, in GlobalPosition pos, in Mass mass);
+
+    [Query(Parallel = true)]
+    [All<LocalPosition, ParentRef, Mass, Impulse>]
+    private static void GravityLocal(ref Impulse impulse, in LocalPosition pos, in ParentRef parent, in Mass mass);
+}
 ```
 
-**备注**：限速等玩法规则在本系统实现，物理管线保持纯粹。
+**关键点**：
+
+- 局部域：引力源 = `ParentRef` 行星（局部原点），μ 取 `World.Get<Celestial>(parent.Parent).Mu`（并行只读安全）
+- 全局域：引力源 = 母恒星，`ResolveStar` 用 `WithAll<Celestial, GlobalPosition>().WithNone<Orbit>()` 解析一次并缓存静态 μ/位置
+- 公式：`J = μ·m/(d²·R)`，`dx = 引力源 − 受力方`，`d = |dx|`，方向分量 `dx/d`；double 算、`Fix.FromDouble` 转回
+- 与引力源重合（`d² ≤ 0`）跳过；着地实体无 `Mass`，天然不匹配
+
+### 30 ThrustSystem（已实现）
+
+**职责**：读推进器推力向量，每 tick 入池 `F/R`，同时按 `BurnRate/R` 扣燃料；燃料耗尽（`Fuel ≤ 0`）停止输出。`Systems/ThrustSystem.cs:15`。
+
+**实现**：
+
+```csharp
+[SystemOrder(30)]
+public sealed partial class ThrustSystem : FixedSystem
+{
+    [Query(Parallel = true)]
+    [All<Thruster, Mass, Impulse>]
+    private static void Thrust(ref Thruster thruster, ref Impulse impulse, in Mass mass);
+}
+```
+
+**关键点**：
+
+- 组件 `Thruster`（`Physics/Thruster.cs`）：`ThrustX/Y/Z`（推力向量，定点 N）+ `Fuel`（剩余燃料）+ `BurnRate`（每秒消耗，0 = 无限）
+- 每 tick `impulse += Thrust/R`、`Fuel -= BurnRate/R`；查询带 `Mass` 过滤，确保只给可积分实体写入冲量
+- 限速等玩法规则后续在本系统扩展
 
 ### 40 DragSystem
 
@@ -128,27 +153,35 @@ private static void Drag(ref Impulse impulse, in LocalPosition pos, in LocalVelo
 
 **备注**：高度 = `|LocalPosition| − SurfaceRadius`；高于大气顶直接跳过。⏳ 大气参数（密度剖面）需扩展 `Celestial` 或独立组件。
 
-### 50 ImpulseIntegrationSystem
+### 50 ImpulseIntegrationSystem（已实现）
 
-**职责**：唯一积分点。`Δv = p/m`（`Δv_fix = p_fix×500/m_fix`，Int128，截断），兑换后残差留池不清零。
+**职责**：唯一积分点。`Δv = p/m`（`Δv_fix = p_fix×K/m_fix`，`K = Scale²/TickRate = 500`，Int128，截断），兑换后只扣已兑换的整量子部分，残差留池不清零。`Systems/ImpulseIntegrationSystem.cs:16`。
 
-**查询**：
+**实现**：
 
 ```csharp
-[Query(Parallel = true)]
-[All<Impulse, Mass, GlobalVelocity>]
-private static void IntegrateGlobal(ref GlobalVelocity vel, ref Impulse impulse, in Mass mass);
+[SystemOrder(50)]
+public sealed partial class ImpulseIntegrationSystem : FixedSystem
+{
+    [Query(Parallel = true)]
+    [All<Impulse, Mass, GlobalVelocity>]
+    private static void IntegrateGlobal(ref GlobalVelocity vel, ref Impulse impulse, in Mass mass);
 
-[Query(Parallel = true)]
-[All<Impulse, Mass, LocalVelocity>]
-private static void IntegrateLocal(ref LocalVelocity vel, ref Impulse impulse, in Mass mass);
+    [Query(Parallel = true)]
+    [All<Impulse, Mass, LocalVelocity>]
+    private static void IntegrateLocal(ref LocalVelocity vel, ref Impulse impulse, in Mass mass);
+}
 ```
 
-**备注**：实现前先把 `Physics/Force.cs` 的 `Force` 组件重命名为 `Impulse`（语义已按冲量定稿，见 GbarMotion.md）；`Mass` 已实现。
+**关键点**：
+
+- `Exchange(ref impulse, mass)`：`dv = impulse×K/mass`（截断）、`impulse -= dv×mass/K`（只扣已兑换部分），残差留池与后续冲量合并凑整
+- 截断而非四舍五入，保证残差与池同号、守恒逐 bit 成立（见 GbarMotion.md）
+- 速度只由本系统写；受力系统只往 `Impulse` 做加法
 
 ### 60 MoveSystem（已实现）
 
-**职责**：唯一移动点。两域各自纯整数加法 `pos += v`，速度量纲 = 定点单位/tick。`Systems/MoveSystem.cs:16`。
+**职责**：唯一移动点。两域各自整数加法 `pos += v / Scale`（速度 cm/tick、位置 cm，差 1:100）。`Systems/MoveSystem.cs:22`。
 
 **实现**：
 
@@ -342,7 +375,7 @@ public sealed class NetServerSystem : UpdateSystem, IPacketHandler
 |---|---|
 | 网络链路（传输 + 收包 + 同步） | ✅ 已通（NetServerSystem + NetSyncSystem） |
 | 位置积分 | ✅（MoveSystem） |
-| 冲量物理管线（引力/推力/阻力/积分） | ⏳ |
+| 冲量物理管线（引力 ✅ / 推力 ✅ / 积分 ✅ / 阻力 ⏳） | ⏳ |
 | 天体 on-rails（OrbitalSystem） | ✅ |
 | 双域切换（SoiTransferSystem） | ⏳ |
 | 着地体制（Locomotion/GroundTransition） | ⏳ |
@@ -354,8 +387,8 @@ public sealed class NetServerSystem : UpdateSystem, IPacketHandler
 
 | 组件 | 现状 | 说明 |
 |---|---|---|
-| `Impulse` | ⏳ 由 `Force` 重命名 | 物理冲量池，受力系统只写入 |
-| `Thruster` | ⏳ 待设计 | 推力、朝向、燃料关联 |
+| `Impulse` | ✅ 已实现（由 `Force` 重命名） | 物理冲量池，受力系统只写入 |
+| `Thruster` | ✅ 已实现 | 推力向量 + 燃料 + 消耗率 |
 | `GroundedTag` | ⏳ 待建 | 着地标记（空结构体） |
 | `MoveIntent` | ⏳ 待建 | 移动意图：方向 + 速度 |
 | `Celestial` / `Orbit` / `Mass` / `ParentRef` / 双域坐标 | ✅ 已实现 | — |
@@ -365,7 +398,7 @@ public sealed class NetServerSystem : UpdateSystem, IPacketHandler
 | 里程碑 | 系统（Order） | 前置依赖 | 产出 |
 |---|---|---|---|
 | **M0 网络地基**（✅ 已完成） | NetServerSystem(0) + NetSyncSystem(120) + MoveSystem(60) | 传输层、双域坐标、NetworkId/PlayerTag | 客户端可连接、握手、收 Keyframe/Delta、位置积分 |
-| **M1 冲量物理管线** | 组件补全 → ImpulseIntegrationSystem(50) + GravitySystem(20) + ThrustSystem(30) + DragSystem(40) | `Impulse` 重命名、`Thruster`、大气参数 | 大气飞行/轨道涌现、残差守恒 |
+| **M1 冲量物理管线** | 组件补全 → ImpulseIntegrationSystem(50, ✅) + GravitySystem(20, ✅) + ThrustSystem(30, ✅) + DragSystem(40) | `Impulse` 重命名（✅）、`Thruster`（✅）、大气参数 | 大气飞行/轨道涌现、残差守恒 |
 | **M2 天体 on-rails 与域切换** | OrbitalSystem(10, ✅) + SoiTransferSystem(90) | `Celestial`/`Orbit`（已就绪） | 行星公转、SOI 穿越、双域完整 |
 | **M3 着地体制** | LocomotionSystem(70) + GroundTransitionSystem(80) | `GroundedTag`、`MoveIntent` | 地表行走、起降切换 |
 | **M4 AOI 与同步剪枝** | SpaceAoiSystem(100) + LocalAoiSystem(110) + NetSyncSystem 接可见集 | 双域坐标、NetworkId（已就绪） | 带宽可行（GbarNet.md 结论） |

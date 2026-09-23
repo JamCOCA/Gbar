@@ -19,11 +19,13 @@ from .state import EntityView, WorldSnapshot
 class ClientUI:
     CANVAS_W, CANVAS_H = 720, 560
     LOG_H = 10  # 日志面板行数
+    FOCUS_SPAN = 2e7  # 双击列表项聚焦时画布视野跨度（米）
 
     def __init__(self, client: ThinClient):
         self._client = client
         self._selected_net_id = None  # 监视栏当前选中的实体
         self._selected_body_id = None  # 监视栏当前选中的天体（cele）
+        self._follow_net_id = None  # 正在跟随的实体（镜头始终居中），None = 不跟随
         self._entity_ids = []  # 列表行号 → NetId 映射
         self._body_ids = []  # 天体列表行号 → NetId 映射
         self._log_revision = -1  # 已渲染的日志版本号
@@ -32,6 +34,12 @@ class ClientUI:
         self._net_last_recv = 0                  # 采样起点的累计接收字节
         self._net_up = 0.0                       # 上行速率 B/s
         self._net_down = 0.0                     # 下行速率 B/s
+
+        self._paused = False               # 暂停快照：冻结显示，连接不断、数据照常收发
+        self._frozen_snap = None           # 暂停时捕获的 WorldSnapshot
+        self._frozen_planets = None        # 暂停时捕获的天体解析视图
+        self._snap = None                  # 当前显示的 WorldSnapshot（双击聚焦用）
+        self._planets = None               # 当前显示的天体解析视图
 
         self._root = tk.Tk()
         self._root.title("ThinClient")
@@ -56,24 +64,34 @@ class ClientUI:
         self._canvas.bind("<Button-5>", lambda e: self._zoom_at(e.x, e.y, 1 / 1.2))
         self._canvas.bind("<KeyPress-g>", lambda _e: self._toggle_soi())
         self._canvas.focus_set()
+        # 用 bind_all 让快捷键全局生效（不依赖画布焦点），输入框内由处理器自行忽略
+        self._root.bind_all("<KeyPress-space>", self._toggle_pause)
+        self._root.bind_all("<KeyPress-p>", self._toggle_pause)
+        self._root.bind_all("<KeyPress-f>", self._toggle_follow)
 
         right = tk.Frame(self._root, bg="#181c22")
         right.grid(row=0, column=1, sticky="ns")
         self._info = tk.Label(right, justify=tk.LEFT, anchor="nw", bg="#181c22", fg="#d7dce2",
                               font=("Consolas", 10), padx=10, pady=6)
         self._info.pack(fill=tk.X)
+        self._pause_btn = tk.Button(right, text="Pause (space)", command=self._toggle_pause,
+                                    bg="#2d3a4a", fg="#d7dce2", activebackground="#3d4a5a",
+                                    activeforeground="#ffffff", relief=tk.FLAT, font=("Consolas", 9))
+        self._pause_btn.pack(fill=tk.X, padx=10, pady=(0, 4))
         tk.Label(right, text="Bodies", bg="#181c22", fg="#8a94a2", font=("Consolas", 9)).pack(anchor="w", padx=10)
         self._body_listbox = tk.Listbox(right, width=30, height=5, bg="#101418", fg="#d7dce2",
                                         font=("Consolas", 10), selectbackground="#2d3a4a",
                                         highlightthickness=0, activestyle="none")
         self._body_listbox.pack(fill=tk.X, padx=10)
         self._body_listbox.bind("<<ListboxSelect>>", self._on_select_body)
+        self._body_listbox.bind("<Double-Button-1>", self._focus_body)
         tk.Label(right, text="Entities", bg="#181c22", fg="#8a94a2", font=("Consolas", 9)).pack(anchor="w", padx=10)
         self._listbox = tk.Listbox(right, width=30, height=5, bg="#101418", fg="#d7dce2",
                                    font=("Consolas", 10), selectbackground="#2d3a4a",
                                    highlightthickness=0, activestyle="none")
         self._listbox.pack(fill=tk.X, padx=10)
         self._listbox.bind("<<ListboxSelect>>", self._on_select)
+        self._listbox.bind("<Double-Button-1>", self._focus_entity)
         tk.Label(right, text="Inspector", bg="#181c22", fg="#8a94a2", font=("Consolas", 9)).pack(anchor="w", padx=10)
         self._inspector = tk.Label(right, justify=tk.LEFT, anchor="nw", bg="#181c22", fg="#d7dce2",
                                    font=("Consolas", 10), padx=10, pady=6)
@@ -100,8 +118,23 @@ class ClientUI:
     # ---- 刷新 ----
 
     def _refresh(self):
-        snap = self._client.state.snapshot()
-        planets = self._client.state.resolve_celestials(snap.tick)
+        if self._paused:
+            snap = self._frozen_snap
+            planets = self._frozen_planets
+        else:
+            snap = self._client.state.snapshot()
+            planets = self._client.state.resolve_celestials(snap.tick)
+        self._snap = snap
+        self._planets = planets
+        # 跟随：镜头始终居中跟随实体（保留当前缩放，只改中心）
+        if self._follow_net_id is not None:
+            e = snap.entities.get(self._follow_net_id)
+            if e is not None:
+                wx, wy, _ = self._world_pos(e, planets)
+                if self._view_scale is None:
+                    self._view_scale = min(self.CANVAS_W, self.CANVAS_H) / self.FOCUS_SPAN
+                self._view_cx = wx
+                self._view_cy = wy
         self._draw(snap, planets)
         self._update_info(snap, planets)
         self._update_body_list(snap)
@@ -110,13 +143,78 @@ class ClientUI:
         self._update_log()
         self._root.after(UI_REFRESH_MS, self._refresh)
 
+    # ---- 暂停 / 聚焦 ----
+
+    def _toggle_pause(self, _event=None):
+        """冻结当前快照（不关闭连接）：捕获此刻的实体表与天体位置，之后 UI 一直显示这份副本。"""
+        # 输入框（filter/日志）里打字不触发暂停快捷键
+        w = getattr(_event, "widget", None)
+        if w is not None and isinstance(w, (tk.Entry, tk.Text)):
+            return
+        if not self._paused:
+            self._frozen_snap = self._client.state.snapshot()
+            self._frozen_planets = self._client.state.resolve_celestials(self._frozen_snap.tick)
+        self._paused = not self._paused
+        self._pause_btn.config(text="Resume (space)" if self._paused else "Pause (space)")
+
+    def _focus_entity(self, _event):
+        if self._snap is None or self._planets is None:
+            return
+        sel = self._listbox.curselection()
+        if not sel:
+            return
+        net_id = self._entity_ids[sel[0]]
+        e = self._snap.entities.get(net_id)
+        if e is None:
+            return
+        wx, wy, _ = self._world_pos(e, self._planets)
+        self._view_cx = wx
+        self._view_cy = wy
+        self._view_scale = min(self.CANVAS_W, self.CANVAS_H) / self.FOCUS_SPAN
+        self._follow_net_id = net_id  # 双击后开始跟随该实体
+
+    def _focus_body(self, _event):
+        if self._snap is None or self._planets is None:
+            return
+        sel = self._body_listbox.curselection()
+        if not sel:
+            return
+        net_id = self._body_ids[sel[0]]
+        p = self._planets.get(net_id)
+        if p is None:
+            return
+        self._view_cx = p.x
+        self._view_cy = p.y
+        self._view_scale = min(self.CANVAS_W, self.CANVAS_H) / self.FOCUS_SPAN
+
+    def _toggle_follow(self, _event=None):
+        """切换跟随：跟随当前选中的实体（镜头始终居中），再按一次取消。"""
+        w = getattr(_event, "widget", None)
+        if w is not None and isinstance(w, (tk.Entry, tk.Text)):
+            return
+        if self._follow_net_id is not None:
+            self._follow_net_id = None
+        elif self._selected_net_id is not None:
+            self._follow_net_id = self._selected_net_id
+            if self._view_scale is None:
+                self._view_scale = min(self.CANVAS_W, self.CANVAS_H) / self.FOCUS_SPAN
+
     # ---- 视图变换（矢量缩放 / 拖拽） ----
+
+    @staticmethod
+    def _world_pos(e, planets: dict) -> tuple:
+        """实体世界坐标：局部域实体（space_net_id != 0）叠加到母天体全局位置，全局域实体无偏移。"""
+        p = planets.get(e.space_net_id)
+        if p is not None:
+            return e.x + p.x, e.y + p.y, e.z + p.z
+        return e.x, e.y, e.z
 
     def _ensure_fit(self, snap: WorldSnapshot, planets: dict):
         if self._view_scale is not None:
             return
-        xs = [e.x for e in snap.entities.values()] + [p.x for p in planets.values()]
-        ys = [e.y for e in snap.entities.values()] + [p.y for p in planets.values()]
+        ent = [self._world_pos(e, planets) for e in snap.entities.values()]
+        xs = [w[0] for w in ent] + [p.x for p in planets.values()]
+        ys = [w[1] for w in ent] + [p.y for p in planets.values()]
         if not xs:
             return
         w = max(max(xs) - min(xs), 1.0)
@@ -191,16 +289,17 @@ class ClientUI:
                           font=("Consolas", 8))
 
         for e in snap.entities.values():
-            px, py = to_px(e.x, e.y)
+            wx, wy, _ = self._world_pos(e, planets)
+            px, py = to_px(wx, wy)
             is_player = e.net_id == snap.player_net_id
             color, r = ("#ffb454", 7) if is_player else ("#4fc3f7", 5)
             if e.net_id == self._selected_net_id:
                 c.create_oval(px - r - 3, py - r - 3, px + r + 3, py + r + 3, outline="#ffffff")
             c.create_oval(px - r, py - r, px + r, py + r, fill=color, outline="")
             c.create_text(px + 10, py, text=str(e.net_id), fill="#8a94a2", anchor="w", font=("Consolas", 8))
-            c.create_line(px, py, *to_px(e.x + e.vx, e.y + e.vy), fill=color, arrow=tk.LAST)
+            c.create_line(px, py, *to_px(wx + e.vx, wy + e.vy), fill=color, arrow=tk.LAST)
 
-        c.create_text(6, self.CANVAS_H - 6, text="drag=pan  wheel=zoom  dblclick=fit  g=soi",
+        c.create_text(6, self.CANVAS_H - 6, text="drag=pan  wheel=zoom  dblclick=fit  g=soi  space=pause  f=follow  2x-list=focus",
                       fill="#5a6472", anchor="sw", font=("Consolas", 8))
 
     # ---- 信息与监视栏 ----
@@ -239,11 +338,13 @@ class ClientUI:
                 gravity = f"netId={src.net_id}"
         self._info.config(
             text=(
+                f"state     {'PAUSED' if self._paused else 'live'}\n"
                 f"tick      {snap.tick}\n"
                 f"entities  {len(snap.entities)}\n"
                 f"bodies    {len(snap.bodies)}\n"
                 f"player    netId={snap.player_net_id}\n"
                 f"gravity   {gravity}\n"
+                f"follow    {self._follow_net_id if self._follow_net_id is not None else '-'}\n"
                 f"up        {self._fmt_rate(self._net_up)}\n"
                 f"down      {self._fmt_rate(self._net_down)}"
             )

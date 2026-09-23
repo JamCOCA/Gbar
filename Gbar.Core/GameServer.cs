@@ -33,7 +33,10 @@ public sealed class GameServer : IDisposable
     /// </summary>
     public int KeyframeIntervalTicks { get; set; }
 
-    /// <summary>已执行的帧数，启动后从 0 递增。</summary>
+    /// <summary>时间加速倍率：每帧跑 TimeScale 个固定步进（&gt;1 加速模拟，供观测小时级的真实轨道运动）。</summary>
+    public int TimeScale { get; set; } = 1;
+
+    /// <summary>已执行的固定步进数（TimeScale &gt; 1 时与真实帧数不成 1:1），启动后从 0 递增。</summary>
     public long Tick { get; private set; }
 
     /// <summary>主循环是否正在运行。</summary>
@@ -169,7 +172,7 @@ public sealed class GameServer : IDisposable
 
         var fixedDelta = (float)interval.TotalSeconds;  // 恒定步长，保证模拟确定性
         var accumulator = 0f;                           // 累积真实流逝时间，驱动 fixed 补帧
-        const int maxFixedSteps = 5;                    // 单帧最大补帧数，防止死亡螺旋
+        var maxFixedSteps = Math.Max(5, TimeScale * 4); // 单帧最大步进数（时间加速时放大），防止死亡螺旋
 
         while (true)
         {
@@ -189,8 +192,6 @@ public sealed class GameServer : IDisposable
             var delta = (float)(now - last).TotalSeconds; // 实际流逝时间，作为变步长 delta
             last = now;
 
-            Tick++;
-
             // 变步长更新：每帧恰好一次，事件先于系统触发
             OnUpdate?.Invoke(delta);
             _updateSystems.BeforeUpdate(delta);
@@ -198,11 +199,13 @@ public sealed class GameServer : IDisposable
             _updateSystems.AfterUpdate(delta);
             _updateSystems.Commands.Playback(_world);   // 统一回放本组缓存的结构变更
 
-            // 定步长更新：按累积的真实时间跑 0~N 次，慢帧自动补帧，保证模拟与墙钟对齐
-            accumulator += delta;
+            // 定步长更新：按累积时间跑 0~N 次（时间加速按 TimeScale 放大）。
+            // Tick 每个固定步进递增，保证 Tick 与物理步进一一对应（轨道/网络同步都按 Tick 对齐）。
+            accumulator += delta * TimeScale;
             var steps = 0;
             while (accumulator >= fixedDelta && steps < maxFixedSteps)
             {
+                Tick++;
                 OnFixedUpdate?.Invoke(fixedDelta);
                 _fixedSystems.BeforeUpdate(fixedDelta);
                 _fixedSystems.Update(fixedDelta);

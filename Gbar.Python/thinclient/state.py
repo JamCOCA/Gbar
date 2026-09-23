@@ -7,7 +7,7 @@
 import threading
 from dataclasses import dataclass
 
-from .config import FIXED_SCALE
+from .config import FIXED_SCALE, VELOCITY_SCALE
 from .celestial_index import CelestialIndex
 from .orbital import resolve_bodies
 
@@ -24,16 +24,18 @@ F_VELZ = 1 << 6
 def fmt_entity(e) -> str:
     """EntityState → 可读字符串（米制坐标），用于日志文件。"""
     s = FIXED_SCALE
+    vs = VELOCITY_SCALE
     return (
         f"netId={e.NetId} space={e.SpaceNetId}"
         f" pos=({e.PosX / s:.2f}, {e.PosY / s:.2f}, {e.PosZ / s:.2f})"
-        f" vel=({e.VelX / s:.2f}, {e.VelY / s:.2f}, {e.VelZ / s:.2f})"
+        f" vel=({e.VelX / vs:.2f}, {e.VelY / vs:.2f}, {e.VelZ / vs:.2f})"
     )
 
 
 def fmt_delta(d) -> str:
     """EntityDelta → 可读字符串，只显示掩码指示的变化字段。"""
     s = FIXED_SCALE
+    vs = VELOCITY_SCALE
     parts = [f"netId={d.NetId} mask=0x{d.Mask:02x}"]
     if d.Mask & F_SPACE:
         parts.append(f"space={d.SpaceNetId}")
@@ -44,11 +46,11 @@ def fmt_delta(d) -> str:
     if d.Mask & F_POSZ:
         parts.append(f"z={d.PosZ / s:.2f}")
     if d.Mask & F_VELX:
-        parts.append(f"vx={d.VelX / s:.2f}")
+        parts.append(f"vx={d.VelX / vs:.2f}")
     if d.Mask & F_VELY:
-        parts.append(f"vy={d.VelY / s:.2f}")
+        parts.append(f"vy={d.VelY / vs:.2f}")
     if d.Mask & F_VELZ:
-        parts.append(f"vz={d.VelZ / s:.2f}")
+        parts.append(f"vz={d.VelZ / vs:.2f}")
     return " ".join(parts)
 
 
@@ -68,7 +70,8 @@ class EntityView:
     @classmethod
     def from_state(cls, e) -> "EntityView":
         s = FIXED_SCALE
-        return cls(e.NetId, e.SpaceNetId, e.PosX / s, e.PosY / s, e.PosZ / s, e.VelX / s, e.VelY / s, e.VelZ / s)
+        vs = VELOCITY_SCALE
+        return cls(e.NetId, e.SpaceNetId, e.PosX / s, e.PosY / s, e.PosZ / s, e.VelX / vs, e.VelY / vs, e.VelZ / vs)
 
 
 @dataclass(frozen=True)
@@ -180,6 +183,7 @@ class WorldState:
     def _apply_delta(self, d) -> None:
         """把一条字段级增量按掩码合并进现有实体（缺基线时用默认值补全，防御性）。"""
         s = FIXED_SCALE
+        vs = VELOCITY_SCALE
         cur = self._entities.get(d.NetId) or EntityView(d.NetId, 0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
         m = d.Mask
         self._entities[d.NetId] = EntityView(
@@ -188,9 +192,9 @@ class WorldState:
             d.PosX / s if m & F_POSX else cur.x,
             d.PosY / s if m & F_POSY else cur.y,
             d.PosZ / s if m & F_POSZ else cur.z,
-            d.VelX / s if m & F_VELX else cur.vx,
-            d.VelY / s if m & F_VELY else cur.vy,
-            d.VelZ / s if m & F_VELZ else cur.vz,
+            d.VelX / vs if m & F_VELX else cur.vx,
+            d.VelY / vs if m & F_VELY else cur.vy,
+            d.VelZ / vs if m & F_VELZ else cur.vz,
         )
 
     def snapshot(self) -> WorldSnapshot:

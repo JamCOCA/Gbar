@@ -1,1 +1,2 @@
 pythonnet==3.1.0
+pyglet>=2.0

@@ -37,6 +37,7 @@ public sealed class NetSyncSystem : FixedSystem
 
         Collect();
         var tick = (int)Server.Tick;
+        var syncStep = Math.Max(1, Server.TimeScale);   // 时间加速时每 TimeScale tick 才同步一次（≈ 每真实帧一次，固定 ~20 包/s）
 
         foreach (var session in registry.Sessions.Values)
         {
@@ -59,6 +60,9 @@ public sealed class NetSyncSystem : FixedSystem
                 continue;
             }
 
+            // 常态增量按固定真实速率发送，与物理 tick 频率解耦，避免时间加速时带宽按倍数膨胀
+            if (tick % syncStep != 0) continue;
+
             SendDelta(net, session, tick);
         }
     }
@@ -76,10 +80,10 @@ public sealed class NetSyncSystem : FixedSystem
         foreach (var (netId, st) in _current) session.LastSent[netId] = st;
     }
 
-    /// <summary>是否该发周期纠偏 Keyframe：按间隔 + ClientId 相位错开。</summary>
+    /// <summary>是否该发周期纠偏 Keyframe：间隔按时间加速等比放大，保持真实 ~10s 纠偏一次。</summary>
     private bool ShouldSendKeyframe(ClientSession session, int tick)
     {
-        var interval = Server.KeyframeIntervalTicks;
+        var interval = Server.KeyframeIntervalTicks * Math.Max(1, Server.TimeScale);
         if (interval <= 0) return false;
         return tick - session.LastKeyframeTick >= interval && (tick + session.ClientId) % interval == 0;
     }

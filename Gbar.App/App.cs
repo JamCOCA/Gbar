@@ -2,6 +2,7 @@ using Gbar.App.Logging;
 using Gbar.Core;
 using Gbar.Core.Components.Celestial;
 using Gbar.Core.Components.Identity;
+using Gbar.Core.Components.Physics;
 using Gbar.Core.Components.Spatial;
 using Gbar.Core.Logging;
 using Gbar.Core.Persistence;
@@ -16,6 +17,7 @@ public sealed class App : IDisposable
     #region 成员
 
     private const int NetPort = 9050;
+    private const int TimeScale = 100;   // 时间加速：真实轨道周期是小时级，加速 100× 便于观测（可调）
 
     private GameServer? _server;
     private Task? _statusTask;
@@ -34,6 +36,7 @@ public sealed class App : IDisposable
         Log.Start();
 
         _server = new GameServer(tickRate: 20);
+        _server.TimeScale = TimeScale;   // 加速模拟（轨道运动是小时级）
         _server.Persistence = new JsonPersistenceProvider(
             Path.Combine(AppContext.BaseDirectory, "save", "world.json"));
         _server.RegisterSystems();  // 反射扫描所有 FixedSystem/UpdateSystem 子类并自动注册
@@ -49,23 +52,10 @@ public sealed class App : IDisposable
     /// </summary>
     public void Debug()
     {
-        // 网络同步测试：注入 100 个随机位置的全局域实体，统一沿 +X 方向固定速度运动
         var world = _server!.World;
         var registry = _server.ClientRegistry!;
-        for (var i = 0; i < 100; i++)
-        {
-            world.Create(
-                new NetworkId { Value = registry.AllocNetId() },
-                new GlobalPosition
-                {
-                    X = Random.Shared.NextInt64(-100000, 100000),
-                    Y = Random.Shared.NextInt64(-100000, 100000),
-                    Z = Random.Shared.NextInt64(-100000, 100000),
-                },
-                new GlobalVelocity { X = 1000, Y = 0, Z = 0 });
-        }
 
-        // 天体测试：恒星 + 行星 + 卫星（on-rails，位置/自转由 OrbitalSystem 历元解析；Celestial 不进网络快照）
+        // 天体：恒星 + 行星 + 卫星（on-rails，位置/自转由 OrbitalSystem 历元解析；Celestial 不进网络快照）
         var star = world.Create(
             new NetworkId { Value = registry.AllocNetId() },
             new GlobalPosition(),
@@ -137,6 +127,30 @@ public sealed class App : IDisposable
                 OrbitalPeriod = 240.0,    // 测试用短周期（4 min）
                 InitialPhase = 1.0,
             });
+
+        // 引力测试 1：掠过偏转——双曲轨道（v∞≈5000 m/s、撞击参数 1.8e7 m → ~83° 偏转），掠过行星后脱离
+        world.Create(
+            new NetworkId { Value = registry.AllocNetId() },
+            new ParentRef { Parent = planet },
+            new LocalPosition { X = -5_000_000_000L, Y = 1_800_000_000L },   // 距行星心 -5e7 m、+1.8e7 m
+            new LocalVelocity { X = 2_500_000 },                              // +5000 m/s（v_fix = v_si × 500）
+            new Mass { Value = 100_000 },                                     // 1000 kg
+            new Impulse());
+
+        // 引力测试 2：引力捕获——椭圆轨道（r=3e7 m、切向 2500 m/s → e≈0.53），绕行星长期公转
+        world.Create(
+            new NetworkId { Value = registry.AllocNetId() },
+            new ParentRef { Parent = planet },
+            new LocalPosition { X = 3_000_000_000L },                          // 距行星心 3e7 m
+            new LocalVelocity { Y = 1_250_000 },                               // 切向 2500 m/s
+            new Mass { Value = 100_000 },
+            new Impulse());
+
+        // 相对静止测试：被行星捕获的共动锚点——无速度、无质量，固定在行星参考系中，随行星绕恒星做圆周运动
+        world.Create(
+            new NetworkId { Value = registry.AllocNetId() },
+            new ParentRef { Parent = planet },
+            new LocalPosition { Y = 4_000_000_000L });                        // 距行星心 4e7 m，与行星相对静止
     }
 
     /// <summary>启动：开启主循环、注册退出信号并启动状态汇报任务。</summary>

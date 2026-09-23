@@ -46,7 +46,7 @@ public static class Fix
 **全局域**（所有 SOI 之外的深空）：
 
 - 星球本身也是全局坐标实体，由轨道系统推进
-- 移动 = 纯整数加法 `position += velocity`
+- 移动 = 整数加法 `position += velocity / Scale`（速度 cm/tick、位置 cm，差 1:100）
 
 ```csharp
 public struct GlobalPosition { public long X, Y, Z; }
@@ -144,7 +144,7 @@ public struct Impulse { public long X, long Y, long Z; }
 
 ### 兑换公式
 
-物理关系 `Δv = p / m`，定点展开（1 v 单位 = 1 cm/tick = 0.2 m/s，故 `v_fix = v_si × 500`）：
+物理关系 `Δv = p / m`，定点展开（1 v 单位 = 0.01 cm/tick ≈ 0.002 m/s，故 `v_fix = v_si × 500`）：
 
 ```
 Δv_fix = p_fix × K / m_fix        K = Scale² / tickRate = 10000 / 20 = 500
@@ -279,7 +279,7 @@ public static class SpaceGrid
 | 30 | `ThrustSystem` | 推力：读推进组件，往池加 `F/tickRate`，扣燃料 | — |
 | 40 | `DragSystem` | 阻力：大气内往池加 `-k·v·\|v\|/tickRate` | — |
 | 50 | `ImpulseIntegrationSystem` | 唯一积分点：`Δv = p/m`，残差留池 | — |
-| 60 | `MoveSystem` | 唯一移动点：两域各自 `pos += v`，纯整数加法（已实现） | — |
+| 60 | `MoveSystem` | 唯一移动点：两域各自 `pos += v / Scale`（已实现） | — |
 | 70 | `LocomotionSystem` | 着地实体球面位移 + 地形吸附（与 MoveSystem 查询不重叠） | — |
 | 80 | `GroundTransitionSystem` | 着地/飞行切换（迟滞），位置已定稿后判定 | CommandBuffer |
 | 90 | `SoiTransferSystem` | 域切换，唯一坐标转换点（迟滞），最后判定穿越 | CommandBuffer |

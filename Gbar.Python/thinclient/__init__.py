@@ -10,7 +10,8 @@
     events      注入点（生命周期钩子列表）
     handler     协议层（IPacketHandler 实现，依赖 Gbar.Net）
     client      客户端壳（NetClient 生命周期）
-    ui          tkinter 视图（画布 + 实体列表/监视栏 + 收包日志面板）
+    ui          tkinter 视图（画布 + 实体列表/监视栏 + 收包日志面板，--2d）
+    glview      pyglet 3D 视图（太阳系/轨道三维观察，默认）
 
 线程模型：包回调与事件钩子运行在 NetClient 后台轮询线程，钩子内禁止直接操作 UI；
 UI 在主线程通过 WorldState.snapshot() / PacketLogger.recent() 拿一致性副本。
