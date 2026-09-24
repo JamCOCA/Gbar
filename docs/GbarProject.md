@@ -9,7 +9,7 @@
 ```
 Gbar/
 ├── Gbar.Core/                        服务器核心库（ECS）
-│   ├── GameServer.cs                 调度核心：持有 World、驱动主循环、StartNet/持久化
+│   ├── GameServer.cs                 调度核心：持有 World、驱动主循环、StartNet
 │   ├── CommandBufferHub.cs           CommandBuffer 持有包装（线程安全写入）
 │   ├── Components/                   组件定义（一组件一文件，按功能分二级目录）
 │   │   ├── Spatial/                  坐标域：Global/Local Position/Velocity + ParentRef
@@ -19,7 +19,7 @@ Gbar/
 │   ├── Maths/                      定点与确定性数学：Fix.cs（long，1:100）、DetTrig.cs（只用 +−×÷ 的确定性三角函数）
 │   ├── Logging/                      日志：Log + ISink + FileSink/LevelFilterSink
 │   ├── Net/ClientRegistry.cs         连接会话 + NetId 分配（仅主循环线程访问）
-│   ├── Persistence/                  持久化：IPersistenceProvider + JsonPersistenceProvider + EntitySnapshot
+│   ├── Net/NetServer.cs              LiteNetLib 服务器封装 + 事件队列 + 分片发送/重组
 │   ├── SystemGroup/                  变步长/定步长两个系统组（各持有 Commands）
 │   └── Systems/
 │       ├── Base/                     FixedSystem / UpdateSystem 自注册基类 + SystemOrder 特性
@@ -28,11 +28,8 @@ Gbar/
 │       ├── NetServerSystem.cs        握手/连接生命周期（变步长 Order 0）
 │       └── NetSyncSystem.cs          快照/增量同步（定步长 Order 120）
 │
-├── Gbar.Net/                         传输层（LiteNetLib + MemoryPack，不依赖 Gbar.Core）
-│   ├── Client/NetClient.cs           客户端封装 + 分片发送/重组 + 字节统计
-│   ├── Server/                       服务器封装
-│   │   ├── NetServer.cs              事件队列 + 分片发送/重组
-│   │   └── NetEvent.cs               网络事件定义
+├── Gbar.Net/                         协议层（服务器/客户端共享的线上字节标准，不依赖 Gbar.Core）
+│   ├── Client/NetClient.cs           客户端传输封装（pythonnet thinclient 使用；Godot 客户端生命周期自行实现）
 │   └── Protocol/                     协议编解码 + 分发
 │       ├── Packets/                  包体结构（命名空间 Gbar.Net.Protocol.Packets）
 │       │   ├── EntityState.cs        实体完整状态（56 B）
@@ -42,6 +39,7 @@ Gbar/
 │       ├── Packets.cs                序列化 formatter（EntityDelta 字段掩码）
 │       ├── PacketCodec.cs            编解码 + 分发 + 通道选择 + 压缩/分片
 │       ├── PacketType.cs             包类型枚举
+│       ├── ProtocolInfo.cs           协议版本号等标准常量
 │       ├── IPacketHandler.cs         分发回调接口（C#/pythonnet 共享）
 │       ├── PacketCompressor.cs       包级压缩钩子（默认不压缩）
 │       └── FragmentAssembler.cs      分片重组器（按 MessageId 顺序累积）
@@ -71,7 +69,7 @@ Gbar/
 - 每拍：实测 delta → 变步长组 1 次（`OnUpdate` → `BeforeUpdate`/`Update`/`AfterUpdate`）→ `Commands.Playback` 回放 → 累加器驱动定步长组 0~N 次（慢帧补帧，上限 5 次，补不过来丢弃防死亡螺旋）
 - 每次固定步进结束立即 `Commands.Playback(world)` 回放结构变更
 - `JobScheduler` 在 Loop 线程创建/销毁，赋给 `World.SharedJobScheduler`（Arch 的 ParallelQuery 依赖它，且只能在创建线程调用）
-- `StopAsync` 先取消循环并等待退出，再断网、遍历 World 持久化（保证无线程竞争）
+- `StopAsync` 先取消循环并等待退出，再断网（保证无线程竞争）。持久化已移除，后续重新设计（Entity 引用需按 NetworkId 重映射）
 
 ## 系统写法规范
 
@@ -108,11 +106,11 @@ public sealed partial class MoveSystem : FixedSystem
 
 ```csharp
 var app = new App();
-await app.InitAsync();   // 配置日志 → GameServer(20) → 持久化 → RegisterSystems → StartNet(9050) → Initialize → LoadAsync
+await app.InitAsync();   // 配置日志 → GameServer(20) → RegisterSystems → StartNet(9050) → Initialize
 app.Debug();             // 调试注入点：主循环启动前直接写 World 注入测试实体
 app.Start();             // 启动主循环 + 状态汇报任务
 await app.WaitForQuitAsync();
-await app.QuitAsync();   // StopAsync（自动持久化）→ 释放
+await app.QuitAsync();   // StopAsync → 释放
 ```
 
 ## 网络同步要点

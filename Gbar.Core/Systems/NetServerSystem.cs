@@ -6,7 +6,6 @@ using Gbar.Core.Logging;
 using Gbar.Core.Net;
 using Gbar.Net.Protocol;
 using Gbar.Net.Protocol.Packets;
-using Gbar.Net.Server;
 
 namespace Gbar.Core.Systems;
 
@@ -61,7 +60,7 @@ public sealed class NetServerSystem : UpdateSystem, IPacketHandler
         var registry = Server.ClientRegistry!;
         var clientId = _currentClientId;
 
-        if (packet.ProtocolVersion != NetServer.ProtocolVersion)
+        if (packet.ProtocolVersion != ProtocolInfo.Version)
         {
             net.Disconnect(clientId, $"协议版本不符：{packet.ProtocolVersion}");
             return;

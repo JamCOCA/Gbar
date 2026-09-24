@@ -1,6 +1,8 @@
-# Gbar.Net — NetServer 运行说明
+# Gbar.Net — 协议层说明
 
-`NetServer`（位于 `Server/NetServer.cs`）是基于 LiteNetLib 的 UDP 游戏服务器封装，负责客户端连接管理与数据包收发。
+> `NetServer` 已迁至 `Gbar.Core/Net/NetServer.cs`（命名空间 `Gbar.Core.Net`），本文件描述其运行机制。
+
+`NetServer`（位于 `Gbar.Core/Net/NetServer.cs`）是基于 LiteNetLib 的 UDP 游戏服务器封装，负责客户端连接管理与数据包收发。
 
 ## 整体架构
 
@@ -55,6 +57,6 @@ while (server.Events.TryDequeue(out var e))
 | 点 | 说明 |
 |---|---|
 | 线程模型 | 网络在后台线程，事件经队列转交主线程，游戏逻辑单线程化 |
-| 连接鉴权 | 固定密钥 `"gbar"`（`AcceptIfKey`），协议版本见 `ProtocolVersion = 1` |
+| 连接鉴权 | 固定密钥 `"gbar"`（`AcceptIfKey`），协议版本见 `Gbar.Net.Protocol.ProtocolInfo.Version` |
 | 可靠性 | 通道与投递方式由 `PacketCodec.ChannelFor` 按包类型决定 |
 | 关闭安全 | `Stop` 幂等，先停线程再停 NetManager，避免回调访问已释放对象 |

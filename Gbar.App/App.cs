@@ -5,7 +5,6 @@ using Gbar.Core.Components.Identity;
 using Gbar.Core.Components.Physics;
 using Gbar.Core.Components.Spatial;
 using Gbar.Core.Logging;
-using Gbar.Core.Persistence;
 
 namespace Gbar.App;
 
@@ -27,7 +26,7 @@ public sealed class App : IDisposable
 
     #region 生命周期
 
-    /// <summary>初始化：配置日志、创建服务器、注册系统并从持久化存储恢复实体。</summary>
+    /// <summary>初始化：配置日志、创建服务器并注册系统。</summary>
     public async Task InitAsync()
     {
         Log.AddSink(new LevelFilterSink(new ConsoleSink(), LogLevel.Warn)); // 控制台只显示 Warn 以上
@@ -37,13 +36,10 @@ public sealed class App : IDisposable
 
         _server = new GameServer(tickRate: 20);
         _server.TimeScale = TimeScale;   // 加速模拟（轨道运动是小时级）
-        _server.Persistence = new JsonPersistenceProvider(
-            Path.Combine(AppContext.BaseDirectory, "save", "world.json"));
         _server.RegisterSystems();  // 反射扫描所有 FixedSystem/UpdateSystem 子类并自动注册
         _server.StartNet(NetPort);  // 启动网络监听（NetServerSystem/NetSyncSystem 随反射注册生效）
 
         _server.Initialize();
-        await _server.LoadAsync();  // 启动前从持久化存储恢复实体
     }
 
     /// <summary>
@@ -178,7 +174,7 @@ public sealed class App : IDisposable
         if (_statusTask is not null) await _statusTask;
     }
 
-    /// <summary>退出：停止主循环（自动持久化）、释放服务器并关闭日志。</summary>
+    /// <summary>退出：停止主循环、释放服务器并关闭日志。</summary>
     public async Task QuitAsync()
     {
         if (_server is null) return;

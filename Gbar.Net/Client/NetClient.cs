@@ -88,7 +88,7 @@ public sealed class NetClient : IDisposable
     }
 
     /// <summary>发送 Hello 握手包，携带协议版本号</summary>
-    public void SendHello() => Send(PacketType.Hello, new HelloPacket { ProtocolVersion = Server.NetServer.ProtocolVersion });
+    public void SendHello() => Send(PacketType.Hello, new HelloPacket { ProtocolVersion = ProtocolInfo.Version });
 
     /// <summary>发送 Ack 确认包，告知服务器已应用到哪个 Tick</summary>
     public void SendAck(int lastAppliedTick) => Send(PacketType.Ack, new AckPacket { LastAppliedTick = lastAppliedTick });

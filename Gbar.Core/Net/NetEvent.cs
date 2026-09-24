@@ -1,4 +1,4 @@
-namespace Gbar.Net.Server;
+namespace Gbar.Core.Net;
 
 /// <summary>
 /// 网络事件类型

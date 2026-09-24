@@ -10,6 +10,8 @@
     <PackageReference Include="Arch" Version="2.1.0" />
     <PackageReference Include="Arch.System" Version="1.1.0" />
     <PackageReference Include="Arch.System.SourceGenerator" Version="2.1.0" />
+    <!-- NetServer 迁入后 Gbar.Core 直接使用 LiteNetLib；MemoryPack 经 Gbar.Net 传递 -->
+    <PackageReference Include="LiteNetLib" Version="2.1.4" />
   </ItemGroup>
 
   <ItemGroup>

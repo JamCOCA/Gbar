@@ -70,10 +70,18 @@ public sealed partial class OrbitalSystem : FixedSystem
             }
             else
             {
-                var pp = Server.World.Get<GlobalPosition>(parent);
-                px = pp.X;
-                py = pp.Y;
-                pz = pp.Z;
+                // 父实体既无 Orbit 也无 GlobalPosition：Parent 引用已失效（如读到旧存档的错位 Entity）。
+                // 不能 World.Get 硬取——缺组件时 Arch 在工作线程抛 NRE 直接打死进程；告警并按原点降级。
+                if (Server.World.TryGet<GlobalPosition>(parent, out var pp))
+                {
+                    px = pp.X;
+                    py = pp.Y;
+                    pz = pp.Z;
+                }
+                else
+                {
+                    Logging.Log.Warn($"OrbitalSystem：实体 {parent} 缺少 GlobalPosition，其 Orbit.Parent 引用已失效，按原点处理");
+                }
             }
         }
 

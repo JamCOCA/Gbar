@@ -89,7 +89,7 @@ C ── Bye ────→ S    按 PlayerTag 清理归属实体
 
 | 组件 | 位置 | 职责 |
 |---|---|---|
-| `NetServer` | `Gbar.Net/Server/NetServer.cs` | LiteNetLib 封装，后台轮询线程收发，事件入 `ConcurrentQueue` |
+| `NetServer` | `Gbar.Core/Net/NetServer.cs` | LiteNetLib 封装，后台轮询线程收发，事件入 `ConcurrentQueue` |
 | `ClientRegistry` / `ClientSession` | `Gbar.Core/Net/ClientRegistry.cs` | 连接会话 + NetId 分配，仅主循环线程访问 |
 | `NetServerSystem` | `Gbar.Core/Systems/NetServerSystem.cs` | 变步长（每帧），消费事件、握手、玩家实体生命周期 |
 | `NetSyncSystem` | `Gbar.Core/Systems/NetSyncSystem.cs` | 定步长 Order 120（每 tick 末），生成 Keyframe/Delta |
@@ -139,17 +139,20 @@ LiteNetLib 后台线程 ──PollEvents──> NetServer.Events (ConcurrentQueu
 ### 目录对应
 
 ```
-Gbar.Net/           传输层（LiteNetLib + MemoryPack，不依赖 Gbar.Core）
-  Server/NetServer.cs        服务器封装 + 事件队列 + 分片发送/重组
-  Client/NetClient.cs        客户端封装 + 分片发送/重组
-  Protocol/Packets.cs        包定义（EntityState/CelestialState/GalaxyPacket/...）
-  Protocol/PacketCodec.cs    编解码 + 分发 + 通道选择 + 压缩/分片
-  Protocol/PacketCompressor.cs   包级压缩钩子（IPacketCompressor，默认不压缩）
-  Protocol/FragmentAssembler.cs  分片重组器（按 MessageId 顺序累积）
+Gbar.Net/           协议层（服务器/客户端共享的线上字节标准，不依赖任何游戏逻辑）
+  Protocol/PacketType.cs        包类型枚举（封包首字节）
+  Protocol/ProtocolInfo.cs      协议版本号等标准常量
+  Protocol/Packets/             包定义（Hello/Welcome/Galaxy/Keyframe/Delta/Ack/Bye、EntityState/EntityDelta）
+  Protocol/PacketCodec.cs       编解码 + 分发 + 通道选择 + 压缩/分片
+  Protocol/PacketCompressor.cs  包级压缩钩子（IPacketCompressor，默认不压缩）
+  Protocol/FragmentAssembler.cs 分片重组器（按 MessageId 顺序累积）
+  Protocol/IPacketHandler.cs    包分发回调接口（服务器/客户端各自实现自己方向的回调）
+  Client/NetClient.cs           客户端传输封装（Python thinclient 经 pythonnet 使用；Godot 客户端生命周期自行实现时可作参考）
 Gbar.Core/          ECS + 系统（依赖 Gbar.Net）
-  Net/ClientRegistry.cs      会话 + NetId
-  Systems/NetServerSystem.cs 握手/生命周期（UpdateSystem）
-  Systems/NetSyncSystem.cs   快照/增量（FixedSystem, Order 120）
+  Net/NetServer.cs            LiteNetLib 服务器封装 + 事件队列 + 分片发送/重组（Gbar.Net 已迁出传输层，仅存协议标准）
+  Net/ClientRegistry.cs       会话 + NetId
+  Systems/NetServerSystem.cs  握手/生命周期（UpdateSystem）
+  Systems/NetSyncSystem.cs    快照/增量（FixedSystem, Order 120）
 ```
 
 ## 带宽结论（1000 实体 + 1000 玩家，20 tick/s）

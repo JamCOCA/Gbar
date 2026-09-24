@@ -1,7 +1,8 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework>net10.0</TargetFramework>
+    <!-- 多目标：net10.0 供服务器/本仓库使用，net8.0 供 Godot 客户端（Godot 模板当前 TFM）消费。多目标必须用复数 TargetFrameworks -->
+    <TargetFrameworks>net8.0;net10.0</TargetFrameworks>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <!-- 让 LiteNetLib/MemoryPack 等包依赖复制到输出目录，便于 pythonnet 直接加载 -->

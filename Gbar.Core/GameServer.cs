@@ -2,7 +2,6 @@ using System.Linq.Expressions;
 using Arch.Core;
 using Arch.System;
 using Gbar.Core.Net;
-using Gbar.Net.Server;
 using Schedulers;
 
 namespace Gbar.Core;
@@ -47,9 +46,6 @@ public sealed class GameServer : IDisposable
 
     /// <summary>fixed 组（定步长），持有本组的命令缓冲 Hub。</summary>
     public FixedUpdateSystemGroup FixedSystems => _fixedSystems;
-
-    /// <summary>持久化提供方。设置后 <see cref="StopAsync"/> 停止循环后自动保存，<see cref="LoadAsync"/> 可在启动前手动加载。</summary>
-    public Persistence.IPersistenceProvider? Persistence { get; set; }
 
     /// <summary>网络服务器（LiteNetLib 封装）。经 <see cref="StartNet"/> 创建并启动后非空。</summary>
     public NetServer? NetServer { get; private set; }
@@ -105,13 +101,6 @@ public sealed class GameServer : IDisposable
             Activator.CreateInstance(type, this);   // 构造函数内自动注册进对应组
     }
 
-    /// <summary>从持久化存储加载实体到 World。必须在 <see cref="Start"/> 之前调用（此时主循环未运行，直接写 World 是线程安全的）。</summary>
-    public Task LoadAsync(CancellationToken ct = default)
-    {
-        if (IsRunning) throw new InvalidOperationException("主循环运行中不能加载，请在 Start 之前调用。");
-        return Persistence?.LoadAsync(_world, ct) ?? Task.CompletedTask;
-    }
-
     /// <summary>
     /// 创建并启动网络服务器，监听指定端口。重复调用无效。
     /// 通常在 <see cref="Start"/> 之前调用；网络系统（NetServerSystem/NetSyncSystem）会自动读取本实例。
@@ -132,7 +121,7 @@ public sealed class GameServer : IDisposable
         _loopTask = Task.Run(() => Loop(_cts.Token));
     }
 
-    /// <summary>停止主循环并等待其退出，随后自动持久化并释放令牌资源。</summary>
+    /// <summary>停止主循环并等待其退出，释放令牌资源。</summary>
     public async Task StopAsync()
     {
         if (_cts is null) return;
@@ -142,12 +131,8 @@ public sealed class GameServer : IDisposable
         _cts = null;
         _loopTask = null;
 
-        // 循环已退出：先断开所有网络连接（无新数据写入），再安全遍历 World 序列化
+        // 循环已退出：断开所有网络连接（无新数据写入）
         NetServer?.Stop();
-
-        // 循环已退出，无线程竞争，此时遍历 World 序列化是安全的
-        if (Persistence is not null)
-            await Persistence.SaveAsync(_world);
     }
 
     /// <summary>

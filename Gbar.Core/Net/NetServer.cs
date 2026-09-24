@@ -3,7 +3,7 @@ using Gbar.Net.Protocol;
 using Gbar.Net.Protocol.Packets;
 using LiteNetLib;
 
-namespace Gbar.Net.Server;
+namespace Gbar.Core.Net;
 
 /// <summary>
 /// 基于 LiteNetLib 的游戏服务器，负责接收客户端连接和收发数据包。
@@ -11,8 +11,8 @@ namespace Gbar.Net.Server;
 /// </summary>
 public sealed class NetServer : IDisposable
 {
-    /// <summary>协议版本号，用于客户端/服务器兼容性校验</summary>
-    public const int ProtocolVersion = 1;
+    /// <summary>协议版本号，用于客户端/服务器兼容性校验（值见 <see cref="ProtocolInfo.Version"/>）</summary>
+    public const int ProtocolVersion = ProtocolInfo.Version;
 
     /// <summary>待处理的网络事件队列（线程安全）</summary>
     private readonly ConcurrentQueue<NetEvent> _events = new();
