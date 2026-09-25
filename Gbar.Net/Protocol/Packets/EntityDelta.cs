@@ -8,27 +8,25 @@ namespace Gbar.Net.Protocol.Packets;
 public enum EntityFields : byte
 {
     None = 0,
-    SpaceNetId = 1 << 0,
-    PosX = 1 << 1,
-    PosY = 1 << 2,
-    PosZ = 1 << 3,
-    VelX = 1 << 4,
-    VelY = 1 << 5,
-    VelZ = 1 << 6,
+    PosX = 1 << 0,
+    PosY = 1 << 1,
+    PosZ = 1 << 2,
+    VelX = 1 << 3,
+    VelY = 1 << 4,
+    VelZ = 1 << 5,
 }
 
 /// <summary>
 /// 字段级增量：相对上次已 ACK 快照，只携带本 tick 变化的字段。
 /// <see cref="Mask"/> 是 <see cref="EntityFields"/> 组合，序列化时仅写出被标记的字段。
 /// 新实体仍走 <see cref="DeltaPacket.Spawned"/>（完整 <see cref="EntityState"/>），不走本结构。
-/// 注意：本结构是 unmanaged，MemoryPack 对其数组默认按 C# 内存布局整块序列化（含 padding，64 B/元素），
+/// 注意：本结构是 unmanaged，MemoryPack 对其数组默认按 C# 内存布局整块序列化（含 padding），
 /// 因此必须由 formatter 手写序列化（见 Protocol 命名空间下的 EntityDeltaArrayFormatter），不能走自动 formatter。
 /// </summary>
 public struct EntityDelta
 {
     public int NetId;
     public byte Mask;               // EntityFields 组合
-    public int SpaceNetId;
-    public long PosX, PosY, PosZ;
-    public long VelX, VelY, VelZ;
+    public double PosX, PosY, PosZ;
+    public double VelX, VelY, VelZ;
 }

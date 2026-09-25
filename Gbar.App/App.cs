@@ -1,8 +1,6 @@
 using Gbar.App.Logging;
 using Gbar.Core;
-using Gbar.Core.Components.Celestial;
 using Gbar.Core.Components.Identity;
-using Gbar.Core.Components.Physics;
 using Gbar.Core.Components.Spatial;
 using Gbar.Core.Logging;
 
@@ -16,7 +14,6 @@ public sealed class App : IDisposable
     #region 成员
 
     private const int NetPort = 9050;
-    private const int TimeScale = 100;   // 时间加速：真实轨道周期是小时级，加速 100× 便于观测（可调）
 
     private GameServer? _server;
     private Task? _statusTask;
@@ -35,7 +32,6 @@ public sealed class App : IDisposable
         Log.Start();
 
         _server = new GameServer(tickRate: 20);
-        _server.TimeScale = TimeScale;   // 加速模拟（轨道运动是小时级）
         _server.RegisterSystems();  // 反射扫描所有 FixedSystem/UpdateSystem 子类并自动注册
         _server.StartNet(NetPort);  // 启动网络监听（NetServerSystem/NetSyncSystem 随反射注册生效）
 
@@ -51,102 +47,29 @@ public sealed class App : IDisposable
         var world = _server!.World;
         var registry = _server.ClientRegistry!;
 
-        // 天体：恒星 + 行星 + 卫星（on-rails，位置/自转由 OrbitalSystem 历元解析；Celestial 不进网络快照）
-        var star = world.Create(
+        // 占位：游荡敏化人（有速度，测试运动学移动与增量同步）
+        world.Create(
             new NetworkId { Value = registry.AllocNetId() },
-            new GlobalPosition(),
-            new Celestial
-            {
-                Mu = 1.3271244e20,
-                SurfaceRadius = 6.9634e8,
-                SoiRadius = double.MaxValue,   // 恒星无母天体，覆盖整个星系
-                InitialRotation = 0f,
-                AngularVelocity = 0.00001f,
-            });
-
-        var planet = world.Create(
-            new NetworkId { Value = registry.AllocNetId() },
-            new GlobalPosition(),
-            new Celestial
-            {
-                Mu = 3.9860044e14,
-                SurfaceRadius = 6.371e6,
-                SoiRadius = 9.25e8,
-                InitialRotation = 0.5f,
-                AngularVelocity = 0.0001f,
-            },
-            new Orbit
-            {
-                Parent = star,
-                SemiMajorAxis = 1.496e11,
-                Eccentricity = 0.0167,
-                OrbitalPeriod = 1200.0,   // 测试用短周期（20 min），便于观察轨道运动
-                InitialPhase = 0f,
-            });
+            new Position { X = 10.0, Y = 0.0, Z = 20.0 },
+            new Velocity { X = 1.5, Y = 0.0, Z = 0.8 },
+            new AoiCell());
 
         world.Create(
             new NetworkId { Value = registry.AllocNetId() },
-            new GlobalPosition(),
-            new Celestial
-            {
-                Mu = 4.282837e13,
-                SurfaceRadius = 3.3895e6,
-                SoiRadius = 5.77e8,
-                InitialRotation = 1.2f,
-                AngularVelocity = 0.00009f,
-            },
-            new Orbit
-            {
-                Parent = star,
-                SemiMajorAxis = 2.279e11,
-                Eccentricity = 0.0934,
-                OrbitalPeriod = 2000.0,   // 测试用短周期（~33 min）
-                InitialPhase = 2.0,
-            });
+            new Position { X = -40.0, Y = 0.0, Z = 60.0 },
+            new Velocity { X = 0.0, Y = 0.0, Z = -2.0 },
+            new AoiCell());
+
+        // 占位：静态介质泉（资源点，静止）
+        world.Create(
+            new NetworkId { Value = registry.AllocNetId() },
+            new Position { X = 200.0, Y = -5.0, Z = 150.0 },
+            new AoiCell());
 
         world.Create(
             new NetworkId { Value = registry.AllocNetId() },
-            new GlobalPosition(),
-            new Celestial
-            {
-                Mu = 4.9048695e12,
-                SurfaceRadius = 1.7374e6,
-                SoiRadius = 6.62e7,
-                InitialRotation = 0f,
-                AngularVelocity = 0.0001f,
-            },
-            new Orbit
-            {
-                Parent = planet,
-                SemiMajorAxis = 3.844e8,
-                Eccentricity = 0.0549,
-                OrbitalPeriod = 240.0,    // 测试用短周期（4 min）
-                InitialPhase = 1.0,
-            });
-
-        // 引力测试 1：掠过偏转——双曲轨道（v∞≈5000 m/s、撞击参数 1.8e7 m → ~83° 偏转），掠过行星后脱离
-        world.Create(
-            new NetworkId { Value = registry.AllocNetId() },
-            new ParentRef { Parent = planet },
-            new LocalPosition { X = -5_000_000_000L, Y = 1_800_000_000L },   // 距行星心 -5e7 m、+1.8e7 m
-            new LocalVelocity { X = 2_500_000 },                              // +5000 m/s（v_fix = v_si × 500）
-            new Mass { Value = 100_000 },                                     // 1000 kg
-            new Impulse());
-
-        // 引力测试 2：引力捕获——椭圆轨道（r=3e7 m、切向 2500 m/s → e≈0.53），绕行星长期公转
-        world.Create(
-            new NetworkId { Value = registry.AllocNetId() },
-            new ParentRef { Parent = planet },
-            new LocalPosition { X = 3_000_000_000L },                          // 距行星心 3e7 m
-            new LocalVelocity { Y = 1_250_000 },                               // 切向 2500 m/s
-            new Mass { Value = 100_000 },
-            new Impulse());
-
-        // 相对静止测试：被行星捕获的共动锚点——无速度、无质量，固定在行星参考系中，随行星绕恒星做圆周运动
-        world.Create(
-            new NetworkId { Value = registry.AllocNetId() },
-            new ParentRef { Parent = planet },
-            new LocalPosition { Y = 4_000_000_000L });                        // 距行星心 4e7 m，与行星相对静止
+            new Position { X = -300.0, Y = -120.0, Z = 80.0 },
+            new AoiCell());
     }
 
     /// <summary>启动：开启主循环、注册退出信号并启动状态汇报任务。</summary>

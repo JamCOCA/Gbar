@@ -13,9 +13,6 @@ public enum PacketType : byte
     /// <summary>S→C 分配身份（ClientId / PlayerNetId / ServerTick）。</summary>
     Welcome,
 
-    /// <summary>S→C 星图表（天体轨道根数），Welcome 后一次性下发，之后天体位置两端各自按 tick 解析。</summary>
-    Galaxy,
-
     /// <summary>S→C 全量快照：加入对齐 / 周期纠偏 / 回退重建。</summary>
     Keyframe,
 

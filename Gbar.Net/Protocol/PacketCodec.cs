@@ -130,9 +130,6 @@ public static class PacketCodec
                 case PacketType.Welcome:
                     handler.OnWelcome(MemoryPackSerializer.Deserialize<WelcomePacket>(body));
                     return true;
-                case PacketType.Galaxy:
-                    handler.OnGalaxy(MemoryPackSerializer.Deserialize<GalaxyPacket>(body));
-                    return true;
                 case PacketType.Keyframe:
                     handler.OnKeyframe(MemoryPackSerializer.Deserialize<KeyframePacket>(body));
                     return true;
@@ -163,7 +160,7 @@ public static class PacketCodec
     /// </summary>
     public static DeliveryMethod ChannelFor(PacketType type) => type switch
     {
-        PacketType.Hello or PacketType.Welcome or PacketType.Galaxy or PacketType.Keyframe or PacketType.Bye
+        PacketType.Hello or PacketType.Welcome or PacketType.Keyframe or PacketType.Bye
             => DeliveryMethod.ReliableOrdered,
         PacketType.Delta => DeliveryMethod.Sequenced,
         PacketType.Ack => DeliveryMethod.Unreliable,

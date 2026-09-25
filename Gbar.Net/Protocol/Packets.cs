@@ -10,7 +10,7 @@ namespace Gbar.Net.Protocol;
 
 /// <summary>
 /// <see cref="EntityDelta"/> 数组的手写序列化：长度头 + 逐元素按 <see cref="EntityDelta.Mask"/> 写出，
-/// 未变化字段不占字节。EntityDelta 是 unmanaged struct，默认会被 MemoryPack 按 64 B/元素整块序列化（含 padding），
+/// 未变化字段不占字节。EntityDelta 是 unmanaged struct，默认会被 MemoryPack 按内存布局整块序列化（含 padding），
 /// 故用本 formatter 覆盖。经 <see cref="EntityDeltaArrayFormatterAttribute"/> 关联到 DeltaPacket.Updated 字段。
 /// </summary>
 public sealed class EntityDeltaArrayFormatter : MemoryPackFormatter<EntityDelta[]>
@@ -36,13 +36,12 @@ public sealed class EntityDeltaArrayFormatter : MemoryPackFormatter<EntityDelta[
             ref var d = ref value[i];
             d.NetId = reader.ReadUnmanaged<int>();
             d.Mask = reader.ReadUnmanaged<byte>();
-            if ((d.Mask & (byte)EntityFields.SpaceNetId) != 0) d.SpaceNetId = reader.ReadUnmanaged<int>();
-            if ((d.Mask & (byte)EntityFields.PosX) != 0) d.PosX = reader.ReadUnmanaged<long>();
-            if ((d.Mask & (byte)EntityFields.PosY) != 0) d.PosY = reader.ReadUnmanaged<long>();
-            if ((d.Mask & (byte)EntityFields.PosZ) != 0) d.PosZ = reader.ReadUnmanaged<long>();
-            if ((d.Mask & (byte)EntityFields.VelX) != 0) d.VelX = reader.ReadUnmanaged<long>();
-            if ((d.Mask & (byte)EntityFields.VelY) != 0) d.VelY = reader.ReadUnmanaged<long>();
-            if ((d.Mask & (byte)EntityFields.VelZ) != 0) d.VelZ = reader.ReadUnmanaged<long>();
+            if ((d.Mask & (byte)EntityFields.PosX) != 0) d.PosX = reader.ReadUnmanaged<double>();
+            if ((d.Mask & (byte)EntityFields.PosY) != 0) d.PosY = reader.ReadUnmanaged<double>();
+            if ((d.Mask & (byte)EntityFields.PosZ) != 0) d.PosZ = reader.ReadUnmanaged<double>();
+            if ((d.Mask & (byte)EntityFields.VelX) != 0) d.VelX = reader.ReadUnmanaged<double>();
+            if ((d.Mask & (byte)EntityFields.VelY) != 0) d.VelY = reader.ReadUnmanaged<double>();
+            if ((d.Mask & (byte)EntityFields.VelZ) != 0) d.VelZ = reader.ReadUnmanaged<double>();
         }
     }
 
@@ -51,7 +50,6 @@ public sealed class EntityDeltaArrayFormatter : MemoryPackFormatter<EntityDelta[
     {
         writer.WriteUnmanaged(d.NetId);
         writer.WriteUnmanaged(d.Mask);
-        if ((d.Mask & (byte)EntityFields.SpaceNetId) != 0) writer.WriteUnmanaged(d.SpaceNetId);
         if ((d.Mask & (byte)EntityFields.PosX) != 0) writer.WriteUnmanaged(d.PosX);
         if ((d.Mask & (byte)EntityFields.PosY) != 0) writer.WriteUnmanaged(d.PosY);
         if ((d.Mask & (byte)EntityFields.PosZ) != 0) writer.WriteUnmanaged(d.PosZ);

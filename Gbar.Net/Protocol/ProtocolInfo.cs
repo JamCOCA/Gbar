@@ -7,5 +7,5 @@ namespace Gbar.Net.Protocol;
 public static class ProtocolInfo
 {
     /// <summary>协议版本号，用于客户端/服务器兼容性校验</summary>
-    public const int Version = 1;
+    public const int Version = 2;
 }
