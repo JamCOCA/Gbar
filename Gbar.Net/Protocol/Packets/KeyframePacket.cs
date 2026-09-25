@@ -1,4 +1,5 @@
 using MemoryPack;
+using Gbar.Net.Protocol.Entities;
 
 namespace Gbar.Net.Protocol.Packets;
 

@@ -4,6 +4,7 @@ using Gbar.Core.Components.Spatial;
 using Gbar.Core.Logging;
 using Gbar.Core.Net;
 using Gbar.Net.Protocol;
+using Gbar.Net.Protocol.Entities;
 using Gbar.Net.Protocol.Packets;
 
 namespace Gbar.Core.Systems;
@@ -107,6 +108,7 @@ public sealed class NetServerSystem : UpdateSystem, IPacketHandler
         var world = Server.World;
         var entity = world.Create();
         world.Add(entity, new PlayerTag());
+        world.Add(entity, new EntityTypeTag { Value = EntityType.Player });
         world.Add(entity, new NetworkId { Value = netId });
         world.Add(entity, new Position());   // 出生在世界原点，后续由出生点/存档系统决定
         world.Add(entity, new Velocity());

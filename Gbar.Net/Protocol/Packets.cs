@@ -1,5 +1,6 @@
 using System.Buffers;
 using MemoryPack;
+using Gbar.Net.Protocol.Entities;
 using Gbar.Net.Protocol.Packets;
 
 namespace Gbar.Net.Protocol;

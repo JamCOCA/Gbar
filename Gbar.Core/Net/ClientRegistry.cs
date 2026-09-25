@@ -1,6 +1,6 @@
 using Arch.Core;
 using Gbar.Net.Protocol;
-using Gbar.Net.Protocol.Packets;
+using Gbar.Net.Protocol.Entities;
 
 namespace Gbar.Core.Net;
 

@@ -3,6 +3,7 @@ using Gbar.Core.Components.Identity;
 using Gbar.Core.Components.Spatial;
 using Gbar.Core.Net;
 using Gbar.Net.Protocol;
+using Gbar.Net.Protocol.Entities;
 using Gbar.Net.Protocol.Packets;
 
 namespace Gbar.Core.Systems;
@@ -19,7 +20,7 @@ namespace Gbar.Core.Systems;
 public sealed class NetSyncSystem : FixedSystem
 {
     /// <summary>同步可见半径（cell 数）。1 = 玩家所在 cell 及其 26 个相邻 cell。</summary>
-    private const int VisibilityRadiusCells = 1;
+    private const int VisibilityRadiusCells = 10;
 
     private static readonly QueryDescription _query = new QueryDescription().WithAll<NetworkId, Position, AoiCell>();
 
@@ -92,9 +93,11 @@ public sealed class NetSyncSystem : FixedSystem
             var id = world.Get<NetworkId>(e).Value;
             var pos = world.Get<Position>(e);
             var vel = world.TryGet<Velocity>(e, out var v) ? v : default;
+            var type = world.TryGet<EntityTypeTag>(e, out var tag) ? tag.Value : EntityType.None;
             _all.Add((new EntityState
             {
                 NetId = id,
+                Type = type,
                 PosX = pos.X, PosY = pos.Y, PosZ = pos.Z,
                 VelX = vel.X, VelY = vel.Y, VelZ = vel.Z,
             }, world.Get<AoiCell>(e)));

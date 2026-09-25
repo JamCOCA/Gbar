@@ -3,6 +3,7 @@ using Gbar.Core;
 using Gbar.Core.Components.Identity;
 using Gbar.Core.Components.Spatial;
 using Gbar.Core.Logging;
+using Gbar.Net.Protocol.Entities;
 
 namespace Gbar.App;
 
@@ -50,24 +51,28 @@ public sealed class App : IDisposable
         // 占位：游荡敏化人（有速度，测试运动学移动与增量同步）
         world.Create(
             new NetworkId { Value = registry.AllocNetId() },
+            new EntityTypeTag { Value = EntityType.SurfaceWanderer },
             new Position { X = 10.0, Y = 0.0, Z = 20.0 },
             new Velocity { X = 1.5, Y = 0.0, Z = 0.8 },
             new AoiCell());
 
         world.Create(
             new NetworkId { Value = registry.AllocNetId() },
+            new EntityTypeTag { Value = EntityType.SurfaceWanderer },
             new Position { X = -40.0, Y = 0.0, Z = 60.0 },
             new Velocity { X = 0.0, Y = 0.0, Z = -2.0 },
             new AoiCell());
 
-        // 占位：静态介质泉（资源点，静止）
+        // 占位：静态资源点（无速度，测试类型区分）
         world.Create(
             new NetworkId { Value = registry.AllocNetId() },
+            new EntityTypeTag { Value = EntityType.CpcSpring },
             new Position { X = 200.0, Y = -5.0, Z = 150.0 },
             new AoiCell());
 
         world.Create(
             new NetworkId { Value = registry.AllocNetId() },
+            new EntityTypeTag { Value = EntityType.ReactorRuin },
             new Position { X = -300.0, Y = -120.0, Z = 80.0 },
             new AoiCell());
     }
