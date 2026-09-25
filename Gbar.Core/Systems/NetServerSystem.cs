@@ -1,10 +1,8 @@
 using Arch.Core;
-using Gbar.Core.Components.Identity;
-using Gbar.Core.Components.Spatial;
 using Gbar.Core.Logging;
 using Gbar.Core.Net;
+using Gbar.Core.Service;
 using Gbar.Net.Protocol;
-using Gbar.Net.Protocol.Entities;
 using Gbar.Net.Protocol.Packets;
 
 namespace Gbar.Core.Systems;
@@ -69,8 +67,49 @@ public sealed class NetServerSystem : UpdateSystem, IPacketHandler
             return;
         }
 
+        session.State = ClientState.Helloed;   // 版本通过，进入待认证，等 Auth 包
+        Log.Info($"客户端 {clientId} 握手完成（版本 {packet.ProtocolVersion}），等待认证");
+    }
+
+    public void OnAuth(AuthPacket packet)
+    {
+        var net = Server.NetServer!;
+        var registry = Server.ClientRegistry!;
+        var clientId = _currentClientId;
+        var auth = Server.Auth;
+
+        if (auth is null)
+        {
+            net.Disconnect(clientId, "认证服务未就绪");
+            return;
+        }
+        if (!registry.TryGet(clientId, out var session))
+        {
+            net.Disconnect(clientId, "未知连接");
+            return;
+        }
+        if (session.State == ClientState.Authenticated) return;   // 已认证，忽略重复
+        if (session.State != ClientState.Helloed)
+        {
+            net.Disconnect(clientId, "未完成握手");
+            return;
+        }
+
+        // 同步等待 DB（临时方案：阻塞主循环；后续改为异步后台 + 主线程回填）
+        var (result, _, _) = packet.Mode == AuthMode.Register
+            ? auth.RegisterAsync(packet.Account, packet.Password).GetAwaiter().GetResult()
+            : auth.LoginAsync(packet.Account, packet.Password).GetAwaiter().GetResult();
+
+        if (result != AuthResult.Success)
+        {
+            net.Send(clientId, PacketType.AuthFail, new AuthFailPacket { Reason = ToReason(result) });
+            Log.Info($"客户端 {clientId} 认证失败（{result}）");
+            return;
+        }
+
         session.PlayerNetId = registry.AllocNetId();
-        session.PlayerEntity = CreatePlayerEntity(session.PlayerNetId);
+        session.PlayerEntity = Server.EntityFactory!.CreatePlayer(session.PlayerNetId);
+        session.State = ClientState.Authenticated;
 
         net.Send(clientId, PacketType.Welcome, new WelcomePacket
         {
@@ -80,7 +119,7 @@ public sealed class NetServerSystem : UpdateSystem, IPacketHandler
             PlayerNetId = session.PlayerNetId,
         });
 
-        Log.Info($"客户端 {clientId} 握手完成，分配玩家 NetId={session.PlayerNetId}");
+        Log.Info($"客户端 {clientId} 认证成功，账号={packet.Account}，分配 NetId={session.PlayerNetId}");
     }
 
     public void OnAck(AckPacket packet)
@@ -99,22 +138,9 @@ public sealed class NetServerSystem : UpdateSystem, IPacketHandler
 
     // S→C 方向，服务器不会收到，留空
     public void OnWelcome(WelcomePacket packet) { }
+    public void OnAuthFail(AuthFailPacket packet) { }
     public void OnKeyframe(KeyframePacket packet) { }
     public void OnDelta(DeltaPacket packet) { }
-
-    // <summary>创建玩家Entity，后续修改加载方式，目前直接世界原点初始化</summary>
-    private Entity CreatePlayerEntity(int netId)
-    {
-        var world = Server.World;
-        var entity = world.Create();
-        world.Add(entity, new PlayerTag());
-        world.Add(entity, new EntityTypeTag { Value = EntityType.Player });
-        world.Add(entity, new NetworkId { Value = netId });
-        world.Add(entity, new Position());   // 出生在世界原点，后续由出生点/存档系统决定
-        world.Add(entity, new Velocity());
-        world.Add(entity, new AoiCell());    // AOI 标签由 AoiSystem 每 tick 现算更新
-        return entity;
-    }
 
     private void OnClientDisconnected(int clientId)
     {
@@ -126,4 +152,12 @@ public sealed class NetServerSystem : UpdateSystem, IPacketHandler
             Log.Info($"客户端 {clientId} 断开，销毁玩家 NetId={session.PlayerNetId}");
         }
     }
+
+    /// <summary>把认证结果映射为协议层的失败原因。</summary>
+    private static AuthFailReason ToReason(AuthResult result) => result switch
+    {
+        AuthResult.AccountExists => AuthFailReason.AccountExists,
+        AuthResult.InvalidInput => AuthFailReason.InvalidInput,
+        _ => AuthFailReason.InvalidCredentials,
+    };
 }

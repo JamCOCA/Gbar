@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using Gbar.Net.Protocol;
 using Gbar.Net.Protocol.Packets;
 using LiteNetLib;
+using LiteNetLib.Layers;
 
 namespace Gbar.Core.Net;
 
@@ -44,7 +45,7 @@ public sealed class NetServer : IDisposable
         if (_running) return;
 
         _listener = new EventBasedNetListener();
-        _manager = new NetManager(_listener)
+        _manager = new NetManager(_listener, new XorEncryptLayer(ProtocolInfo.PacketLayerKey))
         {
             AutoRecycle = true,
         };

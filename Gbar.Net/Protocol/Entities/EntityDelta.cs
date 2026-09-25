@@ -28,5 +28,5 @@ public struct EntityDelta
     public int NetId;
     public byte Mask;               // EntityFields 组合
     public double PosX, PosY, PosZ;
-    public double VelX, VelY, VelZ;
+    public float VelX, VelY, VelZ;
 }

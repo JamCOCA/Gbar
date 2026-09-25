@@ -2,6 +2,7 @@ using System.Linq.Expressions;
 using Arch.Core;
 using Arch.System;
 using Gbar.Core.Net;
+using Gbar.Core.Service;
 using Schedulers;
 
 namespace Gbar.Core;
@@ -49,6 +50,12 @@ public sealed class GameServer : IDisposable
 
     /// <summary>连接注册表 + NetId 分配器，随 <see cref="StartNet"/> 创建。</summary>
     public ClientRegistry? ClientRegistry { get; private set; }
+
+    /// <summary>实体工厂：统一分配 NetId 并装配组件，随 <see cref="StartNet"/> 创建。</summary>
+    public EntityFactory? EntityFactory { get; private set; }
+
+    /// <summary>认证服务（注册/登录），由 App 装配后注入；未注入前网络认证不可用。</summary>
+    public AuthService? Auth { get; set; }
 
     /// <summary>每帧触发，参数为实际流逝时间（秒）。</summary>
     public event Action<float>? OnUpdate;
@@ -107,6 +114,7 @@ public sealed class GameServer : IDisposable
         if (NetServer is not null) return;
         NetServer = new NetServer();
         ClientRegistry = new ClientRegistry();
+        EntityFactory = new EntityFactory(_world, ClientRegistry);
         NetServer.Start(port, maxConnections);
     }
 

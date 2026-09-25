@@ -116,6 +116,11 @@ public static class PacketCodec
         return DispatchPlain(frame, handler);
     }
 
+    /// <summary>
+    /// 分发一条未压缩的应用消息：首字节是 <see cref="PacketType"/>，其余是 MemoryPack 序列化的包体。
+    /// 按类型反序列化成对应包体并回调 <paramref name="handler"/> 的对应方法；
+    /// 未知类型或反序列化失败返回 false，由调用方断开该连接。
+    /// </summary>
     private static bool DispatchPlain(ReadOnlySpan<byte> data, IPacketHandler handler)
     {
         var type = (PacketType)data[0];
@@ -142,6 +147,12 @@ public static class PacketCodec
                 case PacketType.Bye:
                     handler.OnBye(MemoryPackSerializer.Deserialize<ByePacket>(body));
                     return true;
+                case PacketType.Auth:
+                    handler.OnAuth(MemoryPackSerializer.Deserialize<AuthPacket>(body));
+                    return true;
+                case PacketType.AuthFail:
+                    handler.OnAuthFail(MemoryPackSerializer.Deserialize<AuthFailPacket>(body));
+                    return true;
                 default:
                     return false;
             }
@@ -160,7 +171,7 @@ public static class PacketCodec
     /// </summary>
     public static DeliveryMethod ChannelFor(PacketType type) => type switch
     {
-        PacketType.Hello or PacketType.Welcome or PacketType.Keyframe or PacketType.Bye
+        PacketType.Hello or PacketType.Welcome or PacketType.Keyframe or PacketType.Bye or PacketType.Auth or PacketType.AuthFail
             => DeliveryMethod.ReliableOrdered,
         PacketType.Delta => DeliveryMethod.Sequenced,
         PacketType.Ack => DeliveryMethod.Unreliable,

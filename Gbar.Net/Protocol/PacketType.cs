@@ -24,4 +24,10 @@ public enum PacketType : byte
 
     /// <summary>双向，优雅断开。</summary>
     Bye,
+
+    /// <summary>C→S 注册/登录（双功能，由 AuthPacket.Mode 区分）。</summary>
+    Auth,
+
+    /// <summary>S→C 认证失败，携带原因。</summary>
+    AuthFail,
 }

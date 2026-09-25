@@ -61,6 +61,7 @@ Gbar/
 1. **计算与结构变更分离**：纯计算（`ref` 写组件）直接在并行查询中执行；结构变更（Create/Destroy/Add/Remove）只记录到 `CommandBuffer`，帧末统一回放。
 2. **系统之间严格顺序，查询内部并行**：系统按 `[SystemOrder]` 在单线程依次执行；单个查询内按 chunk 分发到多线程。
 3. **所有权清晰**：`World` 属于 `GameServer`，`CommandBufferHub` 属于各系统组，系统基类构造时自注册，无中间转发层。
+4. **数值类型约定**：`Position` 是唯一使用 `double` 的组件（大世界坐标需双精度）；其余组件一律 `float`（连续物理量：速度 / 旋转）或 `int`（计数 / 身份 / 生命 / CPC 储量）。
 
 ## 主循环
 

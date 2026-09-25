@@ -40,9 +40,9 @@ public sealed class EntityDeltaArrayFormatter : MemoryPackFormatter<EntityDelta[
             if ((d.Mask & (byte)EntityFields.PosX) != 0) d.PosX = reader.ReadUnmanaged<double>();
             if ((d.Mask & (byte)EntityFields.PosY) != 0) d.PosY = reader.ReadUnmanaged<double>();
             if ((d.Mask & (byte)EntityFields.PosZ) != 0) d.PosZ = reader.ReadUnmanaged<double>();
-            if ((d.Mask & (byte)EntityFields.VelX) != 0) d.VelX = reader.ReadUnmanaged<double>();
-            if ((d.Mask & (byte)EntityFields.VelY) != 0) d.VelY = reader.ReadUnmanaged<double>();
-            if ((d.Mask & (byte)EntityFields.VelZ) != 0) d.VelZ = reader.ReadUnmanaged<double>();
+            if ((d.Mask & (byte)EntityFields.VelX) != 0) d.VelX = reader.ReadUnmanaged<float>();
+            if ((d.Mask & (byte)EntityFields.VelY) != 0) d.VelY = reader.ReadUnmanaged<float>();
+            if ((d.Mask & (byte)EntityFields.VelZ) != 0) d.VelZ = reader.ReadUnmanaged<float>();
         }
     }
 

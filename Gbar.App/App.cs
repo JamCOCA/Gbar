@@ -1,9 +1,12 @@
 using Gbar.App.Logging;
 using Gbar.Core;
-using Gbar.Core.Components.Identity;
 using Gbar.Core.Components.Spatial;
 using Gbar.Core.Logging;
+using Gbar.Core.Persistence.Database;
+using Gbar.Core.Persistence.Users;
+using Gbar.Core.Service;
 using Gbar.Net.Protocol.Entities;
+using Microsoft.Extensions.Configuration;
 
 namespace Gbar.App;
 
@@ -20,6 +23,12 @@ public sealed class App : IDisposable
     private Task? _statusTask;
     private readonly TaskCompletionSource _quit = new();
 
+    private GbarDbContextFactory? _dbFactory;
+    private UserRepository? _users;
+
+    /// <summary>用户账号仓储（注册 / 登录用），由 <see cref="InitAsync"/> 按配置构建。</summary>
+    public UserRepository? Users => _users;
+
     #endregion
 
     #region 生命周期
@@ -32,7 +41,21 @@ public sealed class App : IDisposable
         Log.MinimumLevel = LogLevel.Debug;
         Log.Start();
 
+        // 读取配置（appsettings.json），构建数据库工厂与用户仓储
+        var config = new ConfigurationBuilder()
+            .SetBasePath(AppContext.BaseDirectory)
+            .AddJsonFile("appsettings.json", optional: false, reloadOnChange: false)
+            .Build();
+
+        var connectionString = config.GetConnectionString("Postgres")
+            ?? throw new InvalidOperationException("appsettings.json 缺少 ConnectionStrings:Postgres");
+
+        _dbFactory = new GbarDbContextFactory(connectionString);
+        _dbFactory.EnsureCreated();   // 数据库/表不存在时自动创建
+        _users = new UserRepository(_dbFactory);
+
         _server = new GameServer(tickRate: 20);
+        _server.Auth = new AuthService(_users);
         _server.RegisterSystems();  // 反射扫描所有 FixedSystem/UpdateSystem 子类并自动注册
         _server.StartNet(NetPort);  // 启动网络监听（NetServerSystem/NetSyncSystem 随反射注册生效）
 
@@ -45,36 +68,23 @@ public sealed class App : IDisposable
     /// </summary>
     public void Debug()
     {
-        var world = _server!.World;
-        var registry = _server.ClientRegistry!;
+        var factory = _server!.EntityFactory!;
 
         // 占位：游荡敏化人（有速度，测试运动学移动与增量同步）
-        world.Create(
-            new NetworkId { Value = registry.AllocNetId() },
-            new EntityTypeTag { Value = EntityType.SurfaceWanderer },
+        factory.CreateSurfaceWanderer(
             new Position { X = 10.0, Y = 0.0, Z = 20.0 },
-            new Velocity { X = 1.5, Y = 0.0, Z = 0.8 },
-            new AoiCell());
+            new Velocity { X = 1.5f, Y = 0.0f, Z = 0.8f });
 
-        world.Create(
-            new NetworkId { Value = registry.AllocNetId() },
-            new EntityTypeTag { Value = EntityType.SurfaceWanderer },
+        factory.CreateSurfaceWanderer(
             new Position { X = -40.0, Y = 0.0, Z = 60.0 },
-            new Velocity { X = 0.0, Y = 0.0, Z = -2.0 },
-            new AoiCell());
+            new Velocity { X = 0.0f, Y = 0.0f, Z = -2.0f });
 
         // 占位：静态资源点（无速度，测试类型区分）
-        world.Create(
-            new NetworkId { Value = registry.AllocNetId() },
-            new EntityTypeTag { Value = EntityType.CpcSpring },
-            new Position { X = 200.0, Y = -5.0, Z = 150.0 },
-            new AoiCell());
+        factory.CreateStaticEntity(EntityType.CpcSpring,
+            new Position { X = 200.0, Y = -5.0, Z = 150.0 });
 
-        world.Create(
-            new NetworkId { Value = registry.AllocNetId() },
-            new EntityTypeTag { Value = EntityType.ReactorRuin },
-            new Position { X = -300.0, Y = -120.0, Z = 80.0 },
-            new AoiCell());
+        factory.CreateStaticEntity(EntityType.ReactorRuin,
+            new Position { X = -300.0, Y = -120.0, Z = 80.0 });
     }
 
     /// <summary>启动：开启主循环、注册退出信号并启动状态汇报任务。</summary>

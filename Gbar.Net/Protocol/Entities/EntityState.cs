@@ -14,5 +14,5 @@ public partial struct EntityState
     public int NetId;                   // 4 B
     public EntityType Type;             // 1 B 实体类型（出生时确定，终生不变）
     public double PosX, PosY, PosZ;     // 24 B 位置（米）
-    public double VelX, VelY, VelZ;     // 24 B 速度（米/秒）
+    public float VelX, VelY, VelZ;      // 12 B 速度（米/秒）
 }

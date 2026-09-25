@@ -4,6 +4,17 @@ using Gbar.Net.Protocol.Entities;
 
 namespace Gbar.Core.Net;
 
+/// <summary>连接会话的握手/认证进度。</summary>
+public enum ClientState
+{
+    /// <summary>已连接，尚未 Hello。</summary>
+    Connected,
+    /// <summary>已 Hello（版本校验通过），等待认证。</summary>
+    Helloed,
+    /// <summary>已认证，玩家实体已创建。</summary>
+    Authenticated,
+}
+
 /// <summary>
 /// 单个连接的会话状态。仅在主循环线程上读写，无需加锁。
 /// </summary>
@@ -11,6 +22,9 @@ public sealed class ClientSession
 {
     /// <summary>客户端 ID（LiteNetLib Peer.Id）。</summary>
     public int ClientId;
+
+    /// <summary>握手/认证进度。</summary>
+    public ClientState State = ClientState.Connected;
 
     /// <summary>服务器分配给该玩家的 NetId。</summary>
     public int PlayerNetId;

@@ -12,7 +12,9 @@ namespace Gbar.Net.Protocol;
 public interface IPacketHandler
 {
     void OnHello(HelloPacket packet);
+    void OnAuth(AuthPacket packet);
     void OnWelcome(WelcomePacket packet);
+    void OnAuthFail(AuthFailPacket packet);
     void OnKeyframe(KeyframePacket packet);
     void OnDelta(DeltaPacket packet);
     void OnAck(AckPacket packet);
