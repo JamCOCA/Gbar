@@ -1,4 +1,4 @@
-namespace Gbar.Net.Protocol;
+namespace Gbar.Net.Protocol.Tools;
 
 /// <summary>
 /// 包级压缩器接口：对完整封包字节做压缩/解压。

@@ -1,3 +1,4 @@
+using LiteNetLib;
 using MemoryPack;
 
 namespace Gbar.Net.Protocol.Packets;
@@ -10,6 +11,7 @@ public enum AuthMode : byte
 }
 
 /// <summary>C→S 认证包：注册或登录（由 <see cref="Mode"/> 区分），握手后、Welcome 前发送。</summary>
+[Packet(PacketType.Auth, DeliveryMethod.ReliableOrdered, PacketDirection.ClientToServer)]
 [MemoryPackable]
 public partial struct AuthPacket
 {

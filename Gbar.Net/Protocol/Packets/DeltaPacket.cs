@@ -1,3 +1,4 @@
+using LiteNetLib;
 using MemoryPack;
 using Gbar.Net.Protocol;
 using Gbar.Net.Protocol.Entities;
@@ -11,6 +12,7 @@ namespace Gbar.Net.Protocol.Packets;
 /// 序列化由 <see cref="EntityDeltaArrayFormatter"/> 覆盖）。
 /// 单包若超过 Sequenced 通道上限，由传输层自动分片（见 PacketCodec/FragmentAssembler），本协议无需感知。
 /// </summary>
+[Packet(PacketType.Delta, DeliveryMethod.Sequenced, PacketDirection.ServerToClient)]
 [MemoryPackable]
 public partial struct DeltaPacket
 {

@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using Gbar.Net.Protocol;
 using Gbar.Net.Protocol.Packets;
+using Gbar.Net.Protocol.Tools;
 using LiteNetLib;
 using LiteNetLib.Layers;
 
@@ -33,6 +34,9 @@ public sealed class NetServer : IDisposable
     public ConcurrentQueue<NetEvent> Events => _events;
     /// <summary>当前已连接的客户端数量</summary>
     public int PeerCount => _peers.Count;
+
+    /// <summary>接收侧包分发器：服务器只收 C→S 方向，系统在此注册包处理器。</summary>
+    public PacketDispatcher Dispatcher { get; } = new(PacketDirection.ClientToServer);
 
     /// <summary>
     /// 启动服务器并监听指定端口
@@ -83,26 +87,31 @@ public sealed class NetServer : IDisposable
     }
 
     /// <summary>
-    /// 向指定客户端发送数据包
+    /// 向指定客户端发送数据包。类型字节与通道由包结构体上的 [Packet] 特性推导，无需手动传。
     /// </summary>
     /// <typeparam name="T">数据包结构体类型</typeparam>
     /// <param name="clientId">目标客户端 ID</param>
-    /// <param name="type">数据包类型</param>
     /// <param name="body">数据包内容</param>
-    public void Send<T>(int clientId, PacketType type, in T body) where T : struct
+    public void Send<T>(int clientId, in T body) where T : struct
     {
         if (!_peers.TryGetValue(clientId, out var peer)) return;
-        SendToPeer(peer, type, body);
+        SendToPeer(peer, body);
     }
+
+    /// <summary>
+    /// 注册一个 C→S 包处理器（转发给 <see cref="Dispatcher"/>）。
+    /// 处理器签名 <c>void (int clientId, T packet)</c>，clientId 通过参数传入。
+    /// </summary>
+    public void RegisterHandler<T>(Action<int, T> handler) where T : struct => Dispatcher.Register(handler);
 
     /// <summary>
     /// 统一发送：序列化 → 压缩 → 若超过该通道单包上限则应用层分片 → 逐片发送。
     /// ReliableOrdered（Keyframe 等）单包上限足够大，由 LiteNetLib 底层分片，不会走到应用层分片。
     /// </summary>
-    private void SendToPeer<T>(NetPeer peer, PacketType type, in T body) where T : struct
+    private void SendToPeer<T>(NetPeer peer, in T body) where T : struct
     {
-        var method = PacketCodec.ChannelFor(type);
-        var frame = PacketCodec.EncodeFrame(type, body);
+        var method = PacketMeta<T>.Channel;
+        var frame = PacketCodec.EncodeFrame(body);
         var maxSize = peer.GetMaxSinglePacketSize(method);
 
         if (frame.Length <= maxSize)
@@ -123,7 +132,7 @@ public sealed class NetServer : IDisposable
     public void Disconnect(int clientId, string reason)
     {
         if (!_peers.TryGetValue(clientId, out var peer)) return;
-        peer.Send(PacketCodec.Encode(PacketType.Bye, new ByePacket { Reason = reason }), DeliveryMethod.ReliableOrdered);
+        peer.Send(PacketCodec.Encode(new ByePacket { Reason = reason }), PacketMeta<ByePacket>.Channel);
         peer.Disconnect();
     }
 

@@ -2,8 +2,9 @@ namespace Gbar.Net.Protocol;
 
 /// <summary>
 /// 应用层协议包类型，占封包首字节（1 byte）。
-/// 新增包类型时需在 <see cref="PacketCodec.TryDispatch"/> 的 switch 与
-/// <see cref="IPacketHandler"/> 中同步补充分支，否则该包会被静默丢弃（TryDispatch 返回 false）。
+/// 新增包类型时：在此加枚举成员，并在对应结构体上标注
+/// <see cref="PacketAttribute"/>，再于对应端 <see cref="Tools.PacketDispatcher"/> 注册处理器即可；
+/// 未注册的包会被静默丢弃（Dispatch 返回 false）。
 /// </summary>
 public enum PacketType : byte
 {

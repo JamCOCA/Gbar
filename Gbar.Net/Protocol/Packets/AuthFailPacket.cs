@@ -1,3 +1,4 @@
+using LiteNetLib;
 using MemoryPack;
 
 namespace Gbar.Net.Protocol.Packets;
@@ -12,6 +13,7 @@ public enum AuthFailReason : byte
 }
 
 /// <summary>S→C 认证失败包，携带失败原因；客户端可据此提示并重试。</summary>
+[Packet(PacketType.AuthFail, DeliveryMethod.ReliableOrdered, PacketDirection.ServerToClient)]
 [MemoryPackable]
 public partial struct AuthFailPacket
 {

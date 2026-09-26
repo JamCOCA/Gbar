@@ -1,4 +1,4 @@
-namespace Gbar.Net.Protocol;
+namespace Gbar.Net.Protocol.Tools;
 
 /// <summary>
 /// 分片重组器：把同一消息的多个分片按序累积，收齐后吐出完整帧。

@@ -4,6 +4,7 @@ using Gbar.Core.Net;
 using Gbar.Core.Service;
 using Gbar.Net.Protocol;
 using Gbar.Net.Protocol.Packets;
+using Gbar.Net.Protocol.Tools;
 
 namespace Gbar.Core.Systems;
 
@@ -11,14 +12,25 @@ namespace Gbar.Core.Systems;
 /// 网络事件系统（变步长）：每帧从 <see cref="NetServer.Events"/> 队列取出连接/数据/断开事件，
 /// 在主循环线程上完成握手（Hello → Welcome）、玩家实体创建/销毁、Ack 基线更新。
 /// 所有 World 变更都在主循环线程上串行进行，不在并行查询内，因此直接写 World 是安全的（无需 CommandBuffer）。
+/// C→S 方向的数据包由 <see cref="NetServer.Dispatcher"/> 分发（字典查表，无 switch），
+/// 处理器在 <see cref="Initialize"/> 阶段注册到 <see cref="NetServer"/>，clientId 通过回调参数传入。
 /// </summary>
 [SystemOrder(0)]
-public sealed class NetServerSystem : UpdateSystem, IPacketHandler
+public sealed class NetServerSystem : UpdateSystem
 {
-    // TryDispatch 不携带 ClientId，串行分发期间以该字段标记当前数据包的来源
-    private int _currentClientId;
-
     public NetServerSystem(GameServer server) : base(server) { }
+
+    /// <summary>在 Initialize（StartNet 之后）把本系统处理的 C→S 包注册到服务器分发器。</summary>
+    public override void Initialize()
+    {
+        var net = Server.NetServer;
+        if (net is null) return;
+
+        net.RegisterHandler<HelloPacket>(OnHello);
+        net.RegisterHandler<AuthPacket>(OnAuth);
+        net.RegisterHandler<AckPacket>(OnAck);
+        net.RegisterHandler<ByePacket>(OnBye);
+    }
 
     public override void Update(in float delta)
     {
@@ -36,8 +48,7 @@ public sealed class NetServerSystem : UpdateSystem, IPacketHandler
                     break;
 
                 case NetEventKind.Packet:
-                    _currentClientId = ev.ClientId;
-                    if (ev.Data is null || !PacketCodec.TryDispatch(ev.Data, this))
+                    if (ev.Data is null || !PacketCodec.TryDispatch(ev.Data, ev.ClientId, net.Dispatcher))
                         net.Disconnect(ev.ClientId, "非法封包");
                     break;
 
@@ -48,13 +59,12 @@ public sealed class NetServerSystem : UpdateSystem, IPacketHandler
         }
     }
 
-    // ---- IPacketHandler：服务器只处理 C→S 方向 ----
+    // ---- C→S 方向包处理器 ----
 
-    public void OnHello(HelloPacket packet)
+    private void OnHello(int clientId, HelloPacket packet)
     {
         var net = Server.NetServer!;
         var registry = Server.ClientRegistry!;
-        var clientId = _currentClientId;
 
         if (packet.ProtocolVersion != ProtocolInfo.Version)
         {
@@ -71,11 +81,10 @@ public sealed class NetServerSystem : UpdateSystem, IPacketHandler
         Log.Info($"客户端 {clientId} 握手完成（版本 {packet.ProtocolVersion}），等待认证");
     }
 
-    public void OnAuth(AuthPacket packet)
+    private void OnAuth(int clientId, AuthPacket packet)
     {
         var net = Server.NetServer!;
         var registry = Server.ClientRegistry!;
-        var clientId = _currentClientId;
         var auth = Server.Auth;
 
         if (auth is null)
@@ -102,7 +111,7 @@ public sealed class NetServerSystem : UpdateSystem, IPacketHandler
 
         if (result != AuthResult.Success)
         {
-            net.Send(clientId, PacketType.AuthFail, new AuthFailPacket { Reason = ToReason(result) });
+            net.Send(clientId, new AuthFailPacket { Reason = ToReason(result) });
             Log.Info($"客户端 {clientId} 认证失败（{result}）");
             return;
         }
@@ -111,7 +120,7 @@ public sealed class NetServerSystem : UpdateSystem, IPacketHandler
         session.PlayerEntity = Server.EntityFactory!.CreatePlayer(session.PlayerNetId);
         session.State = ClientState.Authenticated;
 
-        net.Send(clientId, PacketType.Welcome, new WelcomePacket
+        net.Send(clientId, new WelcomePacket
         {
             ClientId = clientId,
             TickRate = Server.TickRate,
@@ -122,25 +131,19 @@ public sealed class NetServerSystem : UpdateSystem, IPacketHandler
         Log.Info($"客户端 {clientId} 认证成功，账号={packet.Account}，分配 NetId={session.PlayerNetId}");
     }
 
-    public void OnAck(AckPacket packet)
+    private void OnAck(int clientId, AckPacket packet)
     {
-        if (Server.ClientRegistry!.TryGet(_currentClientId, out var session))
+        if (Server.ClientRegistry!.TryGet(clientId, out var session))
         {
             session.BaselineTick = packet.LastAppliedTick;
             session.Synced = true;   // 首次 Ack 确认 Keyframe 已应用，服务器切换到 Delta
         }
     }
 
-    public void OnBye(ByePacket packet)
+    private void OnBye(int clientId, ByePacket packet)
     {
-        Server.NetServer!.Disconnect(_currentClientId, packet.Reason);
+        Server.NetServer!.Disconnect(clientId, packet.Reason);
     }
-
-    // S→C 方向，服务器不会收到，留空
-    public void OnWelcome(WelcomePacket packet) { }
-    public void OnAuthFail(AuthFailPacket packet) { }
-    public void OnKeyframe(KeyframePacket packet) { }
-    public void OnDelta(DeltaPacket packet) { }
 
     private void OnClientDisconnected(int clientId)
     {

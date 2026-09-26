@@ -61,7 +61,7 @@ public sealed class NetSyncSystem : FixedSystem
     /// <summary>发送全量 Keyframe（按可见集过滤）并重置该连接的 diff 基线。</summary>
     private void SendKeyframe(NetServer net, ClientSession session, int tick)
     {
-        net.Send(session.ClientId, PacketType.Keyframe, new KeyframePacket
+        net.Send(session.ClientId, new KeyframePacket
         {
             Tick = tick,
             Entities = _visible.ToArray(),
@@ -143,7 +143,7 @@ public sealed class NetSyncSystem : FixedSystem
         if (spawned.Count == 0 && updated.Count == 0 && despawned.Count == 0)
             return;
 
-        net.Send(session.ClientId, PacketType.Delta, new DeltaPacket
+        net.Send(session.ClientId, new DeltaPacket
         {
             BaseTick = (int)session.BaselineTick,
             CurrTick = tick,
