@@ -1,6 +1,6 @@
 using Gbar.App.Logging;
 using Gbar.Core;
-using Gbar.Core.Components.Spatial;
+using Gbar.Net.Protocol.Components;
 using Gbar.Core.Logging;
 using Gbar.Core.Persistence.Database;
 using Gbar.Core.Persistence.Users;

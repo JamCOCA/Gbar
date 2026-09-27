@@ -41,8 +41,8 @@ public sealed class ClientSession
     /// <summary>该连接已 ACK 的最新 tick，作为 Delta 的 BaseTick 基线。</summary>
     public long BaselineTick;
 
-    /// <summary>上次发给该连接的实体状态（NetId → 状态），用于增量 diff。</summary>
-    public Dictionary<int, EntityState> LastSent = new();
+    /// <summary>上次发给该连接的实体组件列表（NetId → 组件列表），用于组件级增量 diff。</summary>
+    public Dictionary<int, ComponentEntry[]> LastSent = new();
 }
 
 /// <summary>

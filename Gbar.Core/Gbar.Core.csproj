@@ -23,4 +23,8 @@
     <ProjectReference Include="..\Gbar.Net\Gbar.Net.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <ProjectReference Include="..\Gbar.Sync.Generator\Gbar.Sync.Generator.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
+  </ItemGroup>
+
 </Project>

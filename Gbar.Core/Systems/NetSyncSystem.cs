@@ -2,8 +2,9 @@ using Arch.Core;
 using Gbar.Core.Components.Identity;
 using Gbar.Core.Components.Spatial;
 using Gbar.Core.Net;
-using Gbar.Net.Protocol;
+using Gbar.Net.Protocol.Components;
 using Gbar.Net.Protocol.Entities;
+using Gbar.Net.Protocol.Entities.State;
 using Gbar.Net.Protocol.Packets;
 
 namespace Gbar.Core.Systems;
@@ -13,6 +14,9 @@ namespace Gbar.Core.Systems;
 /// 对未对齐的连接（尚未收到 Ack）每 tick 重发 Keyframe，对已对齐的连接按相对基线 diff 发 Delta。
 /// 可见集由 AoiSystem 写入的 <see cref="AoiCell"/> 决定：只同步与玩家处于同一 cell 或相邻 cell 的实体。
 /// 周期纠偏：每 <see cref="GameServer.KeyframeIntervalTicks"/> tick 重发一次 Keyframe，各连接按 (tick + ClientId) 错峰。
+/// 实体状态按组件标签化负载（<see cref="ComponentEntry"/>）下发：每个实体只携带它实际持有的组件，
+/// 投射物/静态物不再背 HP/CPC 等空槽；增量 diff 在组件粒度上进行（组件级增量替代字段级掩码）。
+/// 组件采集由源生成器产出的 <see cref="SyncReader"/> 完成，本系统不感知具体组件。
 /// 对齐状态（Synced/BaselineTick）只由客户端 Ack 驱动（NetServerSystem.OnAck），
 /// Keyframe 发送本身不置位，避免 Sequenced Delta 抢在 Keyframe 之前造成"基线空洞"。
 /// </summary>
@@ -24,9 +28,10 @@ public sealed class NetSyncSystem : FixedSystem
 
     private static readonly QueryDescription _query = new QueryDescription().WithAll<NetworkId, Position, AoiCell>();
 
-    private readonly List<(EntityState State, AoiCell Cell)> _all = new();
-    private readonly List<EntityState> _visible = new();
+    private readonly List<Snapshot> _all = new();
+    private readonly List<Snapshot> _visible = new();
     private readonly HashSet<int> _visibleIds = new();
+    private readonly List<ComponentEntry> _changed = new();
 
     public NetSyncSystem(GameServer server) : base(server) { }
 
@@ -58,17 +63,37 @@ public sealed class NetSyncSystem : FixedSystem
         }
     }
 
+    /// <summary>实体在某 tick 的同步快照：身份 + 类型 + 完整组件列表。</summary>
+    private readonly struct Snapshot
+    {
+        public readonly int NetId;
+        public readonly EntityType Type;
+        public readonly AoiCell Cell;
+        public readonly ComponentEntry[] Components;
+
+        public Snapshot(int netId, EntityType type, AoiCell cell, ComponentEntry[] components)
+        {
+            NetId = netId;
+            Type = type;
+            Cell = cell;
+            Components = components;
+        }
+    }
+
     /// <summary>发送全量 Keyframe（按可见集过滤）并重置该连接的 diff 基线。</summary>
     private void SendKeyframe(NetServer net, ClientSession session, int tick)
     {
-        net.Send(session.ClientId, new KeyframePacket
+        var entities = new EntitySpawn[_visible.Count];
+        for (var i = 0; i < _visible.Count; i++)
         {
-            Tick = tick,
-            Entities = _visible.ToArray(),
-        });
+            var s = _visible[i];
+            entities[i] = new EntitySpawn { NetId = s.NetId, Type = s.Type, Components = s.Components };
+        }
+
+        net.Send(session.ClientId, new KeyframePacket { Tick = tick, Entities = entities });
         session.LastKeyframeTick = tick;
         session.LastSent.Clear();
-        foreach (var st in _visible) session.LastSent[st.NetId] = st;
+        foreach (var s in _visible) session.LastSent[s.NetId] = s.Components;
     }
 
     /// <summary>是否该发周期纠偏 Keyframe：各连接按 (tick + ClientId) 取模错峰。</summary>
@@ -79,7 +104,7 @@ public sealed class NetSyncSystem : FixedSystem
         return tick - session.LastKeyframeTick >= interval && (tick + session.ClientId) % interval == 0;
     }
 
-    /// <summary>收集本 tick 所有同步实体（NetworkId + Position + AoiCell）。</summary>
+    /// <summary>收集本 tick 所有同步实体（NetworkId + Position + AoiCell），组件列表由生成器产出的 <see cref="SyncReader"/> 读取。</summary>
     private void Collect()
     {
         _all.Clear();
@@ -90,17 +115,10 @@ public sealed class NetSyncSystem : FixedSystem
         world.GetEntities(in _query, entities.AsSpan());
         foreach (var e in entities)
         {
-            var id = world.Get<NetworkId>(e).Value;
-            var pos = world.Get<Position>(e);
-            var vel = world.TryGet<Velocity>(e, out var v) ? v : default;
+            var netId = world.Get<NetworkId>(e).Value;
             var type = world.TryGet<EntityTypeTag>(e, out var tag) ? tag.Value : EntityType.None;
-            _all.Add((new EntityState
-            {
-                NetId = id,
-                Type = type,
-                PosX = pos.X, PosY = pos.Y, PosZ = pos.Z,
-                VelX = vel.X, VelY = vel.Y, VelZ = vel.Z,
-            }, world.Get<AoiCell>(e)));
+            var cell = world.Get<AoiCell>(e);
+            _all.Add(new Snapshot(netId, type, cell, SyncReader.Read(world, e)));
         }
     }
 
@@ -109,32 +127,34 @@ public sealed class NetSyncSystem : FixedSystem
     {
         var playerCell = Server.World.Get<AoiCell>(session.PlayerEntity);
         _visible.Clear();
-        foreach (var (state, cell) in _all)
+        foreach (var s in _all)
         {
-            if (cell.Within(playerCell, VisibilityRadiusCells))
-                _visible.Add(state);
+            if (s.Cell.Within(playerCell, VisibilityRadiusCells))
+                _visible.Add(s);
         }
     }
 
     private void SendDelta(NetServer net, ClientSession session, int tick)
     {
-        var spawned = new List<EntityState>();
-        var updated = new List<EntityDelta>();
+        var spawned = new List<EntitySpawn>();
+        var updated = new List<EntityUpdate>();
         var despawned = new List<int>();
 
         _visibleIds.Clear();
-        foreach (var st in _visible) _visibleIds.Add(st.NetId);
+        foreach (var s in _visible) _visibleIds.Add(s.NetId);
 
-        foreach (var st in _visible)
+        foreach (var s in _visible)
         {
-            if (!session.LastSent.TryGetValue(st.NetId, out var old))
+            if (!session.LastSent.TryGetValue(s.NetId, out var old))
             {
-                spawned.Add(st);
+                spawned.Add(new EntitySpawn { NetId = s.NetId, Type = s.Type, Components = s.Components });
             }
             else
             {
-                var delta = DiffEntity(st, old);
-                if (delta.Mask != 0) updated.Add(delta);
+                _changed.Clear();
+                DiffComponents(s.Components, old, _changed);
+                if (_changed.Count > 0)
+                    updated.Add(new EntityUpdate { NetId = s.NetId, Components = _changed.ToArray() });
             }
         }
         foreach (var netId in session.LastSent.Keys)
@@ -153,21 +173,23 @@ public sealed class NetSyncSystem : FixedSystem
         });
 
         session.LastSent.Clear();
-        foreach (var st in _visible) session.LastSent[st.NetId] = st;
+        foreach (var s in _visible) session.LastSent[s.NetId] = s.Components;
     }
 
-    /// <summary>按字段比较，生成只含变化字段的增量；无变化返回 <see cref="EntityDelta.Mask"/> = 0。</summary>
-    private static EntityDelta DiffEntity(in EntityState cur, in EntityState old)
+    /// <summary>按组件 ID 比对：新增或变化的组件进入 changed；组件集合在实体生命周期内稳定，无需处理移除。</summary>
+    private static void DiffComponents(ComponentEntry[] cur, ComponentEntry[] old, List<ComponentEntry> changed)
     {
-        var d = new EntityDelta { NetId = cur.NetId };
-        byte mask = 0;
-        if (cur.PosX != old.PosX) { mask |= (byte)EntityFields.PosX; d.PosX = cur.PosX; }
-        if (cur.PosY != old.PosY) { mask |= (byte)EntityFields.PosY; d.PosY = cur.PosY; }
-        if (cur.PosZ != old.PosZ) { mask |= (byte)EntityFields.PosZ; d.PosZ = cur.PosZ; }
-        if (cur.VelX != old.VelX) { mask |= (byte)EntityFields.VelX; d.VelX = cur.VelX; }
-        if (cur.VelY != old.VelY) { mask |= (byte)EntityFields.VelY; d.VelY = cur.VelY; }
-        if (cur.VelZ != old.VelZ) { mask |= (byte)EntityFields.VelZ; d.VelZ = cur.VelZ; }
-        d.Mask = mask;
-        return d;
+        foreach (var c in cur)
+        {
+            var found = false;
+            foreach (var o in old)
+            {
+                if (o.Id != c.Id) continue;
+                found = true;
+                if (!ComponentCodecRegistry.Codecs[c.Id].Equals(in o, in c)) changed.Add(c);
+                break;
+            }
+            if (!found) changed.Add(c);
+        }
     }
 }

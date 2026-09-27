@@ -2,6 +2,7 @@ using Arch.Core;
 using Gbar.Core.Components.Identity;
 using Gbar.Core.Components.Spatial;
 using Gbar.Core.Net;
+using Gbar.Net.Protocol.Components;
 using Gbar.Net.Protocol.Entities;
 
 namespace Gbar.Core;
@@ -30,6 +31,8 @@ public sealed class EntityFactory
         new EntityTypeTag { Value = EntityType.Player },
         new Position(),
         new Velocity(),
+        new Health { Current = 100, Max = 100 },
+        new Cpc { Current = 50, Max = 50 },
         new AoiCell());
 
     /// <summary>创建地表游荡敏化人（带速度的运动实体，测试运动学移动与增量同步）。自动分配 NetId。</summary>
@@ -38,6 +41,8 @@ public sealed class EntityFactory
         new EntityTypeTag { Value = EntityType.SurfaceWanderer },
         position,
         velocity,
+        new Health { Current = 80, Max = 80 },
+        new Cpc { Current = 30, Max = 30 },
         new AoiCell());
 
     /// <summary>创建静态实体（资源点/建筑等，无速度）。自动分配 NetId。</summary>

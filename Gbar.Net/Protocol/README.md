@@ -9,11 +9,20 @@ Gbar.Net/Protocol/
 ├── PacketAttribute.cs    # [Packet] 装饰器 + PacketDirection（包元数据唯一事实源）
 ├── PacketType.cs         # 包类型枚举（占封包首字节）
 ├── ProtocolInfo.cs       # 协议常量（版本号、共享密钥）
-├── Packets.cs            # EntityDelta 数组的自定义 MemoryPack formatter
+├── SyncComponentAttribute.cs  # [SyncComponent] 标记可同步组件（ID 可省，被源生成器消费）
+├── Packets.cs            # 组件数组的自定义 MemoryPack formatter
+├── Components/           # 可同步组件 struct（线格式本体，Arch 直接用作 ECS 组件）
+│   ├── Position.cs       # [SyncComponent]（ID 由生成器自动分配）
+│   ├── Velocity.cs       # [SyncComponent]
+│   ├── Rotation.cs       # [SyncComponent]
+│   ├── Health.cs         # [SyncComponent]
+│   └── Cpc.cs            # [SyncComponent]
 ├── Entities/             # 实体同步数据定义
-│   ├── EntityType.cs     # 实体类型枚举
-│   ├── EntityState.cs    # 实体全量状态（Keyframe/Spawned 用）
-│   └── EntityDelta.cs    # 字段级增量 + 脏位掩码 EntityFields
+│   ├── EntityType.cs             # 实体类型枚举
+│   ├── IComponentCodec.cs        # 组件编解码器接口（实现由生成器产出）
+│   └── State/                    # 实体同步状态：全量 + 组件级增量
+│       ├── EntitySpawn.cs            # 新实体全量状态（Keyframe/Spawned 用）
+│       └── EntityUpdate.cs           # 组件级增量（Delta.Updated 用）
 ├── Packets/              # 各包体结构体（MemoryPack 可序列化）
 └── Tools/                # 功能/管线类
     ├── PacketCodec.cs        # 序列化 + 压缩 + 分片 + 解压入口
@@ -22,6 +31,10 @@ Gbar.Net/Protocol/
     ├── PacketCompressor.cs   # 压缩器接口 + 默认不压缩实现
     └── FragmentAssembler.cs  # 分片重组器
 ```
+
+> 组件 ID 枚举、标签联合 `ComponentEntry`、各组件 codec、`ComponentCodecRegistry` 由
+> `Gbar.Sync.Generator` 源生成器扫描 `[SyncComponent]` 后自动生成到 `Gbar.Net.Protocol.Entities`
+> 命名空间，不落盘为源文件。
 
 > 服务端传输封装（`NetServer`/`NetEvent`/`ClientRegistry`）位于 `Gbar.Core/Net`，
 > 依赖 ECS，故保留在 Core，不进入协议层。
@@ -128,6 +141,125 @@ LiteNetLib 收到原始字节
   → 命中处理器 OnXxx(clientId, packet)
 ```
 
+## 客户端接入
+
+客户端是独立项目（Godot C# 或普通 .NET，目标框架 `net8.0`），只引用共享层 `Gbar.Net.dll`，
+**不引用**服务器侧的 `Gbar.Core` / `Gbar.App` / `Gbar.Sync.Generator`。
+
+### 引用与依赖
+
+**开发期**（项目引用，改动自动同步）：
+
+```xml
+<PropertyGroup>
+  <TargetFramework>net8.0</TargetFramework>
+</PropertyGroup>
+<ItemGroup>
+  <ProjectReference Include="..\Gbar\Gbar.Net\Gbar.Net.csproj" />
+  <PackageReference Include="MemoryPack" Version="1.21.4" />
+  <PackageReference Include="LiteNetLib" Version="2.1.4" />
+</ItemGroup>
+```
+
+**发布期**（DLL 引用）：把 `Gbar.Net.dll`、`LiteNetLib.dll`、`MemoryPack.Core.dll` 三个文件
+（取自 `Gbar.Net/bin/Debug/net8.0/`）拷入客户端，用 `<Reference Include="...">` 引用。
+
+### 连接与传输层初始化
+
+客户端与服务器对称，必须使用相同的连接密钥与 XOR 混淆层（见 `NetServer.Start`）：
+
+```csharp
+using LiteNetLib;
+using LiteNetLib.Layers;
+
+var listener = new EventBasedNetListener();
+var manager = new NetManager(listener, new XorEncryptLayer(ProtocolInfo.PacketLayerKey));
+
+listener.NetworkReceiveEvent += (peer, reader, channel, method) => { /* 见下 */ };
+
+manager.Start();
+manager.Connect("服务器地址", 9050, "gbar");   // 密钥 "gbar" 与服务器 AcceptIfKey 一致
+```
+
+### 连接时序
+
+```
+客户端                             服务器
+  │── Hello{ProtocolVersion} ──────▶│  校验版本，不符断开
+  │── Auth{Mode,Account,Password}──▶│  校验账号 → 创建玩家实体
+  │◀─────── Welcome{ClientId,        │
+  │         TickRate,ServerTick,     │
+  │         PlayerNetId} ────────────│
+  │◀─────── Keyframe{Tick,Entities}──│  未对齐：每 tick 重发全量
+  │── Ack{LastAppliedTick} ────────▶│  首次 Ack 后切入 Delta
+  │◀─────── Delta{BaseTick,CurrTick, │  常态：组件级增量
+  │         Spawned,Updated,         │
+  │         Despawned} ──────────────│
+```
+
+### 收包处理（复用协议层管线，无需自己写 switch 分发）
+
+`FragmentAssembler` / `PacketCodec` / `PacketDispatcher` 都在共享层 `Gbar.Net`，客户端直接复用：
+
+```csharp
+using Gbar.Net.Protocol;
+using Gbar.Net.Protocol.Tools;
+using Gbar.Net.Protocol.Entities;
+using Gbar.Net.Protocol.Packets;
+
+var dispatcher = new PacketDispatcher(PacketDirection.ServerToClient);
+dispatcher.Register<WelcomePacket>((_, w) => OnWelcome(w));
+dispatcher.Register<KeyframePacket>((_, k) => OnKeyframe(k));
+dispatcher.Register<DeltaPacket>((_, d) => OnDelta(d));
+
+var assembler = new FragmentAssembler();
+
+// LiteNetLib NetworkReceiveEvent 里：
+var data = new byte[reader.AvailableBytes];
+reader.GetBytes(data, data.Length);
+var frame = assembler.Accept(data);              // 分片则重组，未收齐返回 null
+if (frame is not null)
+    PacketCodec.TryDispatch(frame, 0, dispatcher);  // 解压 + 按首字节查表分发
+```
+
+### 应用组件到本地实体
+
+`ComponentEntry[]` 是标签联合，按 `Id`（`ReplicatedComponent` 枚举）分发：
+
+```csharp
+void OnKeyframe(KeyframePacket k) {
+    foreach (var e in k.Entities) Spawn(e.NetId, e.Type, e.Components);
+}
+void OnDelta(DeltaPacket d) {
+    foreach (var s in d.Spawned)  Spawn(s.NetId, s.Type, s.Components);
+    foreach (var u in d.Updated)  Apply(u.NetId, u.Components);
+    foreach (var id in d.Despawned) Despawn(id);
+}
+
+void Apply(int netId, ComponentEntry[] comps) {
+    foreach (var c in comps) {
+        switch (c.Id) {
+            case ReplicatedComponent.Position: SetPosition(netId, c.Position); break;
+            case ReplicatedComponent.Velocity: SetVelocity(netId, c.Velocity); break;
+            case ReplicatedComponent.Rotation: SetRotation(netId, c.Rotation); break;
+            case ReplicatedComponent.Health:   SetHealth(netId, c.Health);     break;
+            case ReplicatedComponent.Cpc:      SetCpc(netId, c.Cpc);           break;
+        }
+    }
+}
+```
+
+### 客户端发包（Hello / Auth / Ack）
+
+与服务器发送对称：`PacketCodec.EncodeFrame` 序列化 + 拼类型字节，按 `[Packet]` 声明的通道发送：
+
+```csharp
+manager.Send(peer, PacketCodec.EncodeFrame(new HelloPacket { ProtocolVersion = ProtocolInfo.Version }),
+             PacketMeta<HelloPacket>.Channel);
+manager.Send(peer, PacketCodec.EncodeFrame(new AckPacket { LastAppliedTick = lastTick }),
+             PacketMeta<AckPacket>.Channel);
+```
+
 ## 如何新增一个数据包
 
 以新增 C→S 的 `Chat` 包为例：
@@ -168,15 +300,29 @@ private void OnChat(int clientId, ChatPacket packet)
 
 > 方向不符会抛异常：服务器只注册 C→S（含 Both）包，注册 S→C 包会直接失败。
 
-## 实体字段级增量
+## 实体组件级增量
 
-`DeltaPacket.Updated` 使用字段级增量，只序列化变化的字段：
+实体同步状态采用**组件标签化负载**（component-tagged payload）：实体状态不再是一个固定结构体，而是一组带 `ReplicatedComponent` 标签的小块，每个实体只携带它实际持有的组件（投射物只有 Position/Velocity，战斗单位另有 Health/Cpc）。
 
-- `EntityFields`（byte 掩码）：`PosX/PosY/PosZ/VelX/VelY/VelZ` 六个位。
-- `EntityDelta`：`NetId + Mask + 各字段值`。
-- `EntityDeltaArrayFormatter`（`Packets.cs`）：手写序列化，按 `Mask` 只写变化字段，避免 unmanaged struct 默认整块序列化（含 padding）。
+- `ReplicatedComponent`（byte）：组件 ID，由 `[SyncComponent]` 自动编号（字母序）或显式 `id` 决定，只增不删、终生不复用。
+- `ComponentEntry`：标签联合（`Id` + 对应组件值），由源生成器产出。
+- `ComponentEntryArrayFormatter`（`Packets.cs`）：手写序列化，按 `Id` 查表转发到生成器产出的 `IComponentCodec`，只写有效组件，避免联合结构体整块序列化（含空槽 padding）。
 
-`EntityState`（全量）用于 `Keyframe.Entities` 与 `Delta.Spawned`；`EntityDelta`（增量）用于 `Delta.Updated`；`Delta.Despawned` 为待销毁的 NetId。
+`EntitySpawn`（全量，含 `NetId + Type + 组件列表`）用于 `Keyframe.Entities` 与 `Delta.Spawned`；`EntityUpdate`（组件级增量，只带变化组件）用于 `Delta.Updated`；`Delta.Despawned` 为待销毁的 NetId。组件集合在实体生命周期内保持稳定（出生时由 `EntityType` 决定装配），故无需"组件移除"标记。
+
+### 新增一个可复制组件
+
+只需 **1 个 struct + 1 行特性**，其余由 `Gbar.Sync.Generator` 自动生成：
+
+```csharp
+// Gbar.Net/Protocol/Components/Stamina.cs
+[SyncComponent]
+public struct Stamina { public int Current; public int Max; }
+```
+
+`[SyncComponent]` 的 ID 可省略：生成器按类型全名字母序自动编号。仅当需要「跨版本固定线序」（老客户端对接新服务器）时，才显式写 `[SyncComponent(6)]`。
+
+源生成器会自动产出：组件 ID 枚举成员、`ComponentEntry` 联合字段与 `From*` 工厂、`StaminaCodec`、注册表条目，以及服务器侧 `SyncReader` 的读取分支。序列化层（`Packets.cs`）与 `NetSyncSystem` 均无需改动。
 
 ## 协议常量（`ProtocolInfo`）
 

@@ -2,7 +2,7 @@ namespace Gbar.Net.Protocol.Tools;
 
 /// <summary>
 /// 包级压缩器接口：对完整封包字节做压缩/解压。
-/// 压缩以"包（传输帧）"为单位，而不是以单个 EntityState 为单位——批量数据才有跨实体冗余可压缩。
+/// 压缩以"包（传输帧）"为单位，而不是以单个实体组件为单位——批量数据才有跨实体冗余可压缩。
 /// 实现应为无状态、线程安全的纯函数（同一实例会被收发两端并发调用）。
 /// </summary>
 public interface IPacketCompressor

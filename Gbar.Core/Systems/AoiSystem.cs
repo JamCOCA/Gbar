@@ -1,6 +1,7 @@
 using Arch.System;
 using Arch.System.SourceGenerator;
 using Gbar.Core.Components.Spatial;
+using Gbar.Net.Protocol.Components;
 
 namespace Gbar.Core.Systems;
 

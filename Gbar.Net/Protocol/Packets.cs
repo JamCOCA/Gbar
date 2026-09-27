@@ -1,7 +1,6 @@
 using System.Buffers;
 using MemoryPack;
 using Gbar.Net.Protocol.Entities;
-using Gbar.Net.Protocol.Packets;
 
 namespace Gbar.Net.Protocol;
 
@@ -10,13 +9,14 @@ namespace Gbar.Net.Protocol;
 /// </summary>
 
 /// <summary>
-/// <see cref="EntityDelta"/> 数组的手写序列化：长度头 + 逐元素按 <see cref="EntityDelta.Mask"/> 写出，
-/// 未变化字段不占字节。EntityDelta 是 unmanaged struct，默认会被 MemoryPack 按内存布局整块序列化（含 padding），
-/// 故用本 formatter 覆盖。经 <see cref="EntityDeltaArrayFormatterAttribute"/> 关联到 DeltaPacket.Updated 字段。
+/// <see cref="ComponentEntry"/> 数组的手写序列化：长度头 + 逐元素按 <see cref="ComponentEntry.Id"/> 写出，
+/// 未激活的组件字段不占字节。ComponentEntry 是"标签联合"结构体，默认会被 MemoryPack 按内存布局整块序列化
+/// （含空槽 padding），故用本 formatter 覆盖。经 <see cref="ComponentEntryArrayFormatterAttribute"/> 关联到
+/// EntitySpawn.Components / EntityUpdate.Components 字段。
 /// </summary>
-public sealed class EntityDeltaArrayFormatter : MemoryPackFormatter<EntityDelta[]>
+public sealed class ComponentEntryArrayFormatter : MemoryPackFormatter<ComponentEntry[]>
 {
-    public override void Serialize<TBufferWriter>(ref MemoryPackWriter<TBufferWriter> writer, scoped ref EntityDelta[]? value)
+    public override void Serialize<TBufferWriter>(ref MemoryPackWriter<TBufferWriter> writer, scoped ref ComponentEntry[]? value)
     {
         if (value is null)
         {
@@ -24,48 +24,44 @@ public sealed class EntityDeltaArrayFormatter : MemoryPackFormatter<EntityDelta[
             return;
         }
         writer.WriteCollectionHeader(value.Length);
-        foreach (var d in value)
-            WriteEntityDelta(ref writer, d);
+        foreach (var e in value)
+            WriteEntry(ref writer, e);
     }
 
-    public override void Deserialize(ref MemoryPackReader reader, scoped ref EntityDelta[]? value)
+    public override void Deserialize(ref MemoryPackReader reader, scoped ref ComponentEntry[]? value)
     {
         reader.TryReadCollectionHeader(out var count);
-        value = new EntityDelta[count];
+        value = new ComponentEntry[count];
         for (var i = 0; i < count; i++)
-        {
-            ref var d = ref value[i];
-            d.NetId = reader.ReadUnmanaged<int>();
-            d.Mask = reader.ReadUnmanaged<byte>();
-            if ((d.Mask & (byte)EntityFields.PosX) != 0) d.PosX = reader.ReadUnmanaged<double>();
-            if ((d.Mask & (byte)EntityFields.PosY) != 0) d.PosY = reader.ReadUnmanaged<double>();
-            if ((d.Mask & (byte)EntityFields.PosZ) != 0) d.PosZ = reader.ReadUnmanaged<double>();
-            if ((d.Mask & (byte)EntityFields.VelX) != 0) d.VelX = reader.ReadUnmanaged<float>();
-            if ((d.Mask & (byte)EntityFields.VelY) != 0) d.VelY = reader.ReadUnmanaged<float>();
-            if ((d.Mask & (byte)EntityFields.VelZ) != 0) d.VelZ = reader.ReadUnmanaged<float>();
-        }
+            value[i] = ReadEntry(ref reader);
     }
 
-    private static void WriteEntityDelta<TBufferWriter>(ref MemoryPackWriter<TBufferWriter> writer, in EntityDelta d)
+    internal static void WriteEntry<TBufferWriter>(ref MemoryPackWriter<TBufferWriter> writer, in ComponentEntry e)
         where TBufferWriter : IBufferWriter<byte>
     {
-        writer.WriteUnmanaged(d.NetId);
-        writer.WriteUnmanaged(d.Mask);
-        if ((d.Mask & (byte)EntityFields.PosX) != 0) writer.WriteUnmanaged(d.PosX);
-        if ((d.Mask & (byte)EntityFields.PosY) != 0) writer.WriteUnmanaged(d.PosY);
-        if ((d.Mask & (byte)EntityFields.PosZ) != 0) writer.WriteUnmanaged(d.PosZ);
-        if ((d.Mask & (byte)EntityFields.VelX) != 0) writer.WriteUnmanaged(d.VelX);
-        if ((d.Mask & (byte)EntityFields.VelY) != 0) writer.WriteUnmanaged(d.VelY);
-        if ((d.Mask & (byte)EntityFields.VelZ) != 0) writer.WriteUnmanaged(d.VelZ);
+        writer.WriteUnmanaged((byte)e.Id);
+        if (!ComponentCodecRegistry.Codecs.TryGetValue(e.Id, out var codec))
+            throw new InvalidDataException($"未知组件 ID {e.Id}");
+        codec.Write(ref writer, in e);
+    }
+
+    internal static ComponentEntry ReadEntry(ref MemoryPackReader reader)
+    {
+        var id = (ReplicatedComponent)reader.ReadUnmanaged<byte>();
+        if (!ComponentCodecRegistry.Codecs.TryGetValue(id, out var codec))
+            throw new InvalidDataException($"未知组件 ID {id}");
+        var e = new ComponentEntry { Id = id };
+        codec.Read(ref reader, ref e);
+        return e;
     }
 }
 
 /// <summary>
-/// 把 <see cref="EntityDeltaArrayFormatter"/> 关联到 <see cref="DeltaPacket.Updated"/> 字段。
-/// MemoryPack 源生成器看到字段上的该 attribute，会用 <see cref="GetFormatter"/> 返回的 formatter
-/// 序列化该字段（而非默认的 unmanaged 数组），并由生成器自动注册——属 CA2255 允许的源生成器场景。
+/// 把 <see cref="ComponentEntryArrayFormatter"/> 关联到 EntitySpawn.Components / EntityUpdate.Components 字段。
+/// MemoryPack 源生成器看到字段上的该 attribute，会用 <see cref="GetFormatter"/> 返回的 formatter 序列化该字段，
+/// 并由生成器自动注册——属 CA2255 允许的源生成器场景。
 /// </summary>
-public sealed class EntityDeltaArrayFormatterAttribute : MemoryPackCustomFormatterAttribute<EntityDeltaArrayFormatter, EntityDelta[]>
+public sealed class ComponentEntryArrayFormatterAttribute : MemoryPackCustomFormatterAttribute<ComponentEntryArrayFormatter, ComponentEntry[]>
 {
-    public override EntityDeltaArrayFormatter GetFormatter() => new();
+    public override ComponentEntryArrayFormatter GetFormatter() => new();
 }

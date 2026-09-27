@@ -1,6 +1,6 @@
 using LiteNetLib;
 using MemoryPack;
-using Gbar.Net.Protocol.Entities;
+using Gbar.Net.Protocol.Entities.State;
 
 namespace Gbar.Net.Protocol.Packets;
 
@@ -10,5 +10,5 @@ namespace Gbar.Net.Protocol.Packets;
 public partial struct KeyframePacket
 {
     public int Tick;
-    public EntityState[] Entities;
+    public EntitySpawn[] Entities;
 }
