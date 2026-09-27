@@ -31,4 +31,7 @@ public enum PacketType : byte
 
     /// <summary>S→C 认证失败，携带原因。</summary>
     AuthFail,
+
+    /// <summary>C→S 客户端输入请求。</summary>
+    MoveInput
 }

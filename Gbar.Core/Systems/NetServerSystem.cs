@@ -1,4 +1,5 @@
 using Arch.Core;
+using Gbar.Core.Components.Input;
 using Gbar.Core.Logging;
 using Gbar.Core.Net;
 using Gbar.Core.Service;
@@ -30,6 +31,7 @@ public sealed class NetServerSystem : UpdateSystem
         net.RegisterHandler<AuthPacket>(OnAuth);
         net.RegisterHandler<AckPacket>(OnAck);
         net.RegisterHandler<ByePacket>(OnBye);
+        net.RegisterHandler<MoveInputPacket>(OnMoveInput);
     }
 
     public override void Update(in float delta)
@@ -154,6 +156,28 @@ public sealed class NetServerSystem : UpdateSystem
                 Server.World.Destroy(session.PlayerEntity);
             Log.Info($"客户端 {clientId} 断开，销毁玩家 NetId={session.PlayerNetId}");
         }
+    }
+
+    private void OnMoveInput(int clientId, MoveInputPacket packet)
+    {
+        if (!Server.ClientRegistry!.TryGet(clientId, out var session)) return;
+        if (session.State != ClientState.Authenticated || session.PlayerEntity == Entity.Null) return;
+
+        // 服务器权威：归一化输入方向，钳制模长 ≤ 1，杜绝斜向加速
+        var len = MathF.Sqrt(packet.X * packet.X + packet.Y * packet.Y);
+        if (len > 1f)
+        {
+            packet.X /= len;
+            packet.Y /= len;
+        }
+
+        // 意图落为实体组件（latest-wins），由玩家移动系统消费
+        Server.World.Set(session.PlayerEntity, new MoveInput
+        {
+            X = packet.X,
+            Y = packet.Y,
+            Flags = packet.Flags,
+        });
     }
 
     /// <summary>把认证结果映射为协议层的失败原因。</summary>

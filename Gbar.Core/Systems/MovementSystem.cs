@@ -1,8 +1,6 @@
-using Arch.Core;
 using Arch.System;
 using Arch.System.SourceGenerator;
 using Gbar.Net.Protocol.Components;
-using Gbar.Core.Logging;
 
 namespace Gbar.Core.Systems;
 
@@ -15,16 +13,12 @@ public sealed partial class MovementSystem : FixedSystem
 {
     private static float _delta;
 
-    private static readonly QueryDescription _moveQuery = new QueryDescription().WithAll<Position, Velocity>();
-
     public MovementSystem(GameServer server) : base(server) { }
 
     public override void Update(in float delta)
     {
         _delta = delta;
         MoveQuery(World);
-        Log.Debug($"MovementSystem 移动 {World.CountEntities(in _moveQuery)} 个实体");
-        
     }
 
     [Query(Parallel = true)]
