@@ -2,7 +2,7 @@
 
 基于 [Arch](https://arch-ecs.gitbook.io/arch) ECS 框架的游戏服务器。核心设计：**查询内并行计算 + 结构变更延迟回放**。
 
-相关文档：[GbarMotion.md](GbarMotion.md)（坐标/物理/运动方案）、[GbarSystems.md](GbarSystems.md)（系统清单与查询）、[GbarNet.md](GbarNet.md)（网络同步）、[Arch/arch-core.md](Arch/arch-core.md) / [Arch/arch-systems.md](Arch/arch-systems.md)（Arch 框架参考）
+相关文档：[GbarSystems.md](GbarSystems.md)（系统清单与查询）、[GbarNet.md](GbarNet.md)（网络同步）、[Arch/arch-core.md](Arch/arch-core.md) / [Arch/arch-systems.md](Arch/arch-systems.md)（Arch 框架参考）；线格式与新增包细节见 `Gbar.Net/Protocol/README.md`
 
 ## 目录结构
 
@@ -11,47 +11,55 @@ Gbar/
 ├── Gbar.Core/                        服务器核心库（ECS）
 │   ├── GameServer.cs                 调度核心：持有 World、驱动主循环、StartNet
 │   ├── CommandBufferHub.cs           CommandBuffer 持有包装（线程安全写入）
-│   ├── Components/                   组件定义（一组件一文件，按功能分二级目录）
-│   │   ├── Spatial/                  坐标域：Global/Local Position/Velocity + ParentRef
-│   │   ├── Physics/                  物理：Mass、Force
-│   │   ├── Celestial/                天体：Celestial（引力/自转）、Orbit（公转根数）
-│   │   └── Identity/                 标识：NetworkId、PlayerTag
-│   ├── Maths/                      定点与确定性数学：Fix.cs（long，1:100）、DetTrig.cs（只用 +−×÷ 的确定性三角函数）
+│   ├── EntityFactory.cs              实体工厂：统一装配常见实体组件（CreatePlayer/CreateSurfaceWanderer/CreateStaticEntity）
+│   ├── Components/                   服务器本地组件（一组件一文件，按功能分二级目录；不同步）
+│   │   ├── Identity/                 标识：NetworkId、PlayerTag、EntityTypeTag
+│   │   ├── Input/                    输入：MoveInput（移动意图，latest-wins）
+│   │   └── Spatial/                  空间：AoiCell（AOI 网格 cell）
 │   ├── Logging/                      日志：Log + ISink + FileSink/LevelFilterSink
-│   ├── Net/ClientRegistry.cs         连接会话 + NetId 分配（仅主循环线程访问）
-│   ├── Net/NetServer.cs              LiteNetLib 服务器封装 + 事件队列 + 分片发送/重组
+│   ├── Net/                          网络传输（依赖 ECS，留在 Core）
+│   │   ├── ClientRegistry.cs         连接会话 + NetId 分配（仅主循环线程访问）
+│   │   ├── NetServer.cs              LiteNetLib 服务器封装 + 事件队列 + 分片发送/重组
+│   │   └── NetEvent.cs               网络事件（Connected/Packet/Disconnected）
+│   ├── Service/AuthService.cs        注册/登录认证服务
+│   ├── Persistence/                  持久化（Database/ + Users/，含 PasswordHasher）
 │   ├── SystemGroup/                  变步长/定步长两个系统组（各持有 Commands）
 │   └── Systems/
 │       ├── Base/                     FixedSystem / UpdateSystem 自注册基类 + SystemOrder 特性
-│       ├── OrbitalSystem.cs          天体公转/自转历元解析（定步长 Order 10，DetTrig 确定性开普勒求解）
-│       ├── MoveSystem.cs             位置积分（定步长 Order 60，唯一位置写入点）
-│       ├── NetServerSystem.cs        握手/连接生命周期（变步长 Order 0）
+│       ├── NetServerSystem.cs        收包/握手/玩家生命周期（变步长 Order 0）
+│       ├── MoveInputSystem.cs        玩家输入 → 速度（定步长 Order 50）
+│       ├── MovementSystem.cs         运动学积分，唯一位置写入点（定步长 Order 60）
+│       ├── AoiSystem.cs              按坐标写 AOI cell 标签（定步长 Order 100）
 │       └── NetSyncSystem.cs          快照/增量同步（定步长 Order 120）
 │
 ├── Gbar.Net/                         协议层（服务器/客户端共享的线上字节标准，不依赖 Gbar.Core）
-│   ├── Client/NetClient.cs           客户端传输封装（pythonnet thinclient 使用；Godot 客户端生命周期自行实现）
 │   └── Protocol/                     协议编解码 + 分发
-│       ├── Packets/                  包体结构（命名空间 Gbar.Net.Protocol.Packets）
-│       │   ├── EntityState.cs        实体完整状态（56 B）
-│       │   ├── EntityDelta.cs        字段级增量 + EntityFields 脏掩码
-│       │   ├── CelestialState.cs     天体静态定义
-│       │   └── *.cs                  各包：Galaxy/Hello/Welcome/Keyframe/Delta/Ack/Bye
-│       ├── Packets.cs                序列化 formatter（EntityDelta 字段掩码）
-│       ├── PacketCodec.cs            编解码 + 分发 + 通道选择 + 压缩/分片
-│       ├── PacketType.cs             包类型枚举
+│       ├── PacketAttribute.cs        [Packet] 特性（包元数据唯一事实源）
+│       ├── SyncComponentAttribute.cs [SyncComponent] 标记可同步组件（源生成器消费）
+│       ├── PacketType.cs             包类型枚举（首字节）
 │       ├── ProtocolInfo.cs           协议版本号等标准常量
-│       ├── IPacketHandler.cs         分发回调接口（C#/pythonnet 共享）
-│       ├── PacketCompressor.cs       包级压缩钩子（默认不压缩）
-│       └── FragmentAssembler.cs      分片重组器（按 MessageId 顺序累积）
+│       ├── Packets.cs                组件数组的自定义 MemoryPack formatter
+│       ├── Components/               可同步组件 struct（Position/Velocity/Rotation/Health/Cpc）
+│       ├── Entities/                 实体同步数据定义
+│       │   ├── EntityType.cs         实体类型枚举
+│       │   ├── IComponentCodec.cs    组件编解码器接口（实现由生成器产出）
+│       │   └── State/                EntitySpawn（全量）+ EntityUpdate（组件级增量）
+│       ├── Packets/                  各包体结构体（Hello/Welcome/Auth/AuthFail/Keyframe/Delta/Ack/Bye/MoveInput）
+│       ├── Tools/                    功能/管线类
+│       │   ├── PacketCodec.cs        序列化 + 压缩 + 分片 + 解压入口
+│       │   ├── PacketDispatcher.cs   接收侧分发（字典查表，无 switch）
+│       │   ├── PacketMeta.cs         从 [Packet] 读取元数据的静态泛型缓存
+│       │   ├── PacketCompressor.cs   压缩器接口 + 默认不压缩实现
+│       │   └── FragmentAssembler.cs  分片重组器（按 MessageId 顺序累积）
+│       └── README.md                 协议说明（封包格式 / 新增包 / 新增可复制组件）
 │
 ├── Gbar.App/                         启动入口：创建服务器、注册系统、接线
 │   ├── Program.cs                    入口（new App → Init → Debug → Start → Quit）
 │   ├── App.cs                        生命周期封装 + 调试注入点
 │   └── Logging/ConsoleSink.cs        控制台日志 Sink
 │
-├── Gbar.Python/                      Python 测试客户端（pythonnet 加载 Gbar.Net）
-│   ├── ThinClient.py                 入口（带 UI / --no-ui 无界面压测）
-│   └── thinclient/                   client/handler/state/recorder/ui/events/config
+├── Gbar.Sync.Generator/              源生成器：扫描 [SyncComponent]，产出组件 ID / ComponentEntry / codec / SyncReader
+│   └── SyncComponentGenerator.cs
 │
 └── docs/                             文档（含 Arch/ 框架参考）
 ```
@@ -70,29 +78,28 @@ Gbar/
 - 每拍：实测 delta → 变步长组 1 次（`OnUpdate` → `BeforeUpdate`/`Update`/`AfterUpdate`）→ `Commands.Playback` 回放 → 累加器驱动定步长组 0~N 次（慢帧补帧，上限 5 次，补不过来丢弃防死亡螺旋）
 - 每次固定步进结束立即 `Commands.Playback(world)` 回放结构变更
 - `JobScheduler` 在 Loop 线程创建/销毁，赋给 `World.SharedJobScheduler`（Arch 的 ParallelQuery 依赖它，且只能在创建线程调用）
-- `StopAsync` 先取消循环并等待退出，再断网（保证无线程竞争）。持久化已移除，后续重新设计（Entity 引用需按 NetworkId 重映射）
+- `StopAsync` 先取消循环并等待退出，再断网（保证无线程竞争）。持久化目前仅覆盖账号（`AuthService` + `Persistence`）；实体/世界状态持久化后续再设计（Entity 引用需按 NetworkId 重映射）
 
 ## 系统写法规范
 
 ```csharp
 [SystemOrder(60)]
-public sealed partial class MoveSystem : FixedSystem
+public sealed partial class MovementSystem : FixedSystem
 {
-    public MoveSystem(GameServer server) : base(server) { }
+    public MovementSystem(GameServer server) : base(server) { }
 
     public override void Update(in float delta)
     {
-        MoveGlobalQuery(World);   // 手动调用源码生成器生成的查询入口（并行）
-        MoveLocalQuery(World);
+        MoveQuery(World);   // 手动调用源码生成器生成的查询入口（并行）
     }
 
     [Query(Parallel = true)]
-    [All<GlobalPosition, GlobalVelocity>]
-    private static void MoveGlobal(ref GlobalPosition position, in GlobalVelocity velocity)
+    [All<Position, Velocity>]
+    private static void Move(ref Position position, in Velocity velocity)
     {
-        position.X += velocity.X;
-        position.Y += velocity.Y;
-        position.Z += velocity.Z;
+        position.X += velocity.X * _delta;
+        position.Y += velocity.Y * _delta;
+        position.Z += velocity.Z * _delta;
     }
 }
 ```
@@ -117,5 +124,5 @@ await app.QuitAsync();   // StopAsync → 释放
 ## 网络同步要点
 
 - 服务器权威，新连接**关键帧对齐一次**，之后每 tick 收**增量（Delta）**（详见 [GbarNet.md](GbarNet.md)）
-- `Delta.Updated` 为字段级增量：`EntityDelta` 按 `EntityFields` 掩码只发变化字段，由 `Packets.cs` 里的 formatter 手写序列化
+- 实体同步采用**组件级增量**：状态是带 `ReplicatedComponent` 标签的 `ComponentEntry[]` 标签联合，每个实体只携带它实际持有的组件；`Delta.Updated` 只发变化的组件（`EntitySpawn` 全量 / `EntityUpdate` 增量），`Delta.Despawned` 为待销毁的 NetId
 - 分片/压缩在传输层统一处理（`PacketCodec` + `FragmentAssembler` + `PacketCompressor`），业务协议无感知

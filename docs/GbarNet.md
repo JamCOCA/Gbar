@@ -2,20 +2,7 @@
 
 服务器权威：客户端与服务器共享 `Gbar.Net.Protocol` 里的线上字节标准，两端用同一套 `PacketType` 枚举与 MemoryPack 结构体。
 
-## 包结构
-
-应用消息 = `[PacketType: 1 byte][MemoryPack 序列化的包体]`
-
-- 首字节是 `PacketType`（`enum : byte`，底层值即线上字节），决定包体反序列化成哪个结构体
-- 包体由 MemoryPack 序列化，见 `PacketCodec.Encode`（`Gbar.Net/Protocol/PacketCodec.cs`）
-
-传输层统一封包管线（业务层无感知）：
-
-```
-普通帧:  [PacketType: 1][body]
-压缩帧:  [0xFE: 1][PacketType: 1][compressed body]   # 超过 MinCompressBytes 且压缩有收益
-分片包:  [0xFF: 1][MessageId: 2][FragIndex: 2][FragCount: 2][frame fragment]
-```
+> 封包字节格式、压缩/分片细节、新增包与新增可复制组件的步骤见 `Gbar.Net/Protocol/README.md`；本文只讲服务器侧的同步模型与收发流程。
 
 ## 包类型
 
@@ -25,10 +12,13 @@
 | `Auth` | C→S | 注册/登录（`AuthMode` + `Account` + `Password`） |
 | `Welcome` | S→C | 认证通过后分配身份（`ClientId`/`PlayerNetId`/`ServerTick`） |
 | `AuthFail` | S→C | 认证失败（`AuthFailReason`） |
+| `MoveInput` | C→S | 移动输入（方向轴 + `MoveFlags`：running/jumping/crouch） |
 | `Keyframe` | S→C | 全量快照（新连接对齐 / 周期纠偏） |
 | `Delta` | S→C | 常态增量（相对已 ACK 基线） |
 | `Ack` | C→S | 回执，建立同步基线 |
 | `Bye` | 双向 | 优雅断开 |
+
+方向与通道都在各包结构体的 `[Packet]` 特性上声明，是唯一事实源；接收侧由 `PacketDispatcher` 校验方向。
 
 ## 处理流程
 
@@ -52,36 +42,36 @@ if (frame is not null)
 ```csharp
 // NetServerSystem.cs  Update (Order 0)
 case NetEventKind.Packet:
-    _currentClientId = ev.ClientId;
-    if (ev.Data is null || !PacketCodec.TryDispatch(ev.Data, this))
+    if (ev.Data is null || !PacketCodec.TryDispatch(ev.Data, ev.ClientId, net.Dispatcher))
         net.Disconnect(ev.ClientId, "非法封包");
     break;
 ```
 
-### 3. 解帧与分发（`PacketCodec.TryDispatch` → `DispatchPlain`）
+### 3. 解压与分发（`PacketCodec.TryDispatch` → `PacketDispatcher.Dispatch`）
 
-`TryDispatch` 处理压缩标志后交给 `DispatchPlain`；后者读首字节当 `PacketType`，按类型反序列化并回调接口对应方法：
+`TryDispatch` 处理压缩标志后交给分发器；后者读首字节当 `PacketType`，按类型查字典路由到处理器，clientId 通过参数传入：
 
 ```csharp
-// PacketCodec.cs  DispatchPlain
-var type = (PacketType)data[0];       // 首字节 = PacketType
-var body = data[1..];                 // 其余 = MemoryPack 包体
-switch (type)
-{
-    case PacketType.Auth:
-        handler.OnAuth(MemoryPackSerializer.Deserialize<AuthPacket>(body));
-        return true;
-    // ...
-    default:
-        return false;                 // 未知类型 → 上层断开"非法封包"
-}
+// PacketDispatcher.cs  Dispatch
+var type = message[0];                 // 首字节 = PacketType
+if (!_handlers.TryGetValue(type, out var handler)) return false;
+handler.Handle(clientId, message[1..]); // 反序列化 → 回调 OnXxx(clientId, packet)
+return true;
 ```
 
-### 4. 接口回调（`IPacketHandler`）
+### 4. 注册处理器（`NetServerSystem.Initialize`）
 
-`handler` 是实现了 `IPacketHandler` 的对象：服务器 `NetServerSystem` 实现 C→S 方向（`OnHello`/`OnAuth`/`OnAck`/`OnBye`），客户端实现 S→C 方向（`OnWelcome`/`OnAuthFail`/`OnKeyframe`/`OnDelta`）。
+服务器在 `Initialize` 阶段把 C→S 包注册到 `NetServer.Dispatcher`，clientId 通过回调参数传入，无需再手动追踪来源连接：
 
-以登录为例：客户端发 `0x06`（`PacketType.Auth`）+ `AuthPacket` 序列化字节 → `DispatchPlain` 命中 `case PacketType.Auth` → 调 `NetServerSystem.OnAuth(AuthPacket)` → 读 `_currentClientId` 得知来源连接。
+```csharp
+net.RegisterHandler<HelloPacket>(OnHello);
+net.RegisterHandler<AuthPacket>(OnAuth);
+net.RegisterHandler<AckPacket>(OnAck);
+net.RegisterHandler<ByePacket>(OnBye);
+net.RegisterHandler<MoveInputPacket>(OnMoveInput);
+```
+
+以登录为例：客户端发 `PacketType.Auth` + `AuthPacket` 序列化字节 → `PacketDispatcher.Dispatch` 命中对应处理器 → 调 `NetServerSystem.OnAuth(clientId, packet)`，clientId 即来源连接。
 
 ## 握手时序
 
@@ -95,14 +85,26 @@ C ── Ack ────→ S    建立基线（BaselineTick）
 C ←─ Delta ─── S    常态增量循环
 ```
 
+## 同步模型
+
+- **关键帧对齐一次，之后常态 Delta**：新连接连上先收 Keyframe 全量快照，客户端应用后回 `Ack`（携带 `LastAppliedTick`），服务器据此把该连接的 `BaselineTick` 推进到该 tick，此后每 tick 只发相对基线的增量。
+- **组件级增量**：实体状态是带 `ReplicatedComponent` 标签的 `ComponentEntry[]` 标签联合，每个实体只携带它实际持有的组件；`Delta.Updated` 只发变化的组件（`EntitySpawn` 全量 / `EntityUpdate` 增量），`Delta.Despawned` 为待销毁的 NetId。
+- **AOI 可见集剪枝**：`NetSyncSystem` 按玩家 `AoiCell` 只同步同一 cell 或相邻 cell（半径 10 格）内的实体，避免全量广播。
+- **周期纠偏**：每 `KeyframeIntervalTicks`（默认 10 秒）重发一次 Keyframe，各连接按 `(tick + ClientId) % interval` 错峰，防止长期增量累积漂移。
+- **对齐只由 Ack 驱动**：Keyframe 发送本身不置位 `Synced`，避免 Sequenced Delta 抢在 Keyframe 之前造成"基线空洞"。
+
 ## 目录对应
 
 ```
 Gbar.Net/Protocol/
   PacketType.cs        包类型枚举（首字节）
-  PacketCodec.cs       编解码 + 分发 + 通道选择 + 压缩/分片
-  IPacketHandler.cs    分发回调接口（服务器/客户端各自实现自己的方向）
-  Packets/             各包结构体定义（Hello/Auth/Welcome/AuthFail/Keyframe/Delta/Ack/Bye）
+  PacketAttribute.cs   [Packet] 特性（类型/通道/方向唯一事实源）
+  PacketCodec.cs       编解码 + 压缩 + 分片（Tools/）
+  PacketDispatcher.cs  接收侧分发（字典查表，无 switch）（Tools/）
+  Packets/             各包结构体定义（Hello/Welcome/Auth/AuthFail/MoveInput/Keyframe/Delta/Ack/Bye）
+  Components/          可同步组件（Position/Velocity/Rotation/Health/Cpc）
+  Entities/            实体同步数据定义（EntityType + State/EntitySpawn + State/EntityUpdate）
+  README.md            封包格式 / 新增包 / 新增可复制组件
 
 Gbar.Core/
   Net/NetServer.cs           LiteNetLib 封装 + 事件队列 + 分片发送/重组
@@ -110,4 +112,5 @@ Gbar.Core/
   Net/ClientRegistry.cs      连接会话 + NetId + 握手状态
   Service/AuthService.cs     注册/登录/签发 token
   Systems/NetServerSystem.cs 握手/认证/生命周期（UpdateSystem, Order 0）
+  Systems/NetSyncSystem.cs   快照/增量生成（FixedSystem, Order 120）
 ```

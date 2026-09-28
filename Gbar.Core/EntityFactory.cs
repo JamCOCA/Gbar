@@ -1,5 +1,6 @@
 using Arch.Core;
 using Gbar.Core.Components.Identity;
+using Gbar.Core.Components.Input;
 using Gbar.Core.Components.Spatial;
 using Gbar.Core.Net;
 using Gbar.Net.Protocol.Components;
@@ -31,6 +32,8 @@ public sealed class EntityFactory
         new EntityTypeTag { Value = EntityType.Player },
         new Position(),
         new Velocity(),
+        new Rotation(),
+        new MoveInput(),
         new Health { Current = 100, Max = 100 },
         new Cpc { Current = 50, Max = 50 },
         new AoiCell());
