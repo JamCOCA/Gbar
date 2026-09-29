@@ -8,4 +8,11 @@ public struct Rotation
     public float Y;
     public float Z;
     public float W;
+    public Rotation()
+    {
+        X = 0f;
+        Y = 0f;
+        Z = 0f;
+        W =1f;
+    }
 }
