@@ -21,6 +21,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Gbar.Net\Gbar.Net.csproj" />
+    <ProjectReference Include="..\Gbar.Physics\Gbar.Physics.csproj" />
   </ItemGroup>
 
   <ItemGroup>

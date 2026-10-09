@@ -2,5 +2,6 @@
   <Project Path="Gbar.App/Gbar.App.csproj" />
   <Project Path="Gbar.Core/Gbar.Core.csproj" />
   <Project Path="Gbar.Net/Gbar.Net.csproj" />
+  <Project Path="Gbar.Physics/Gbar.Physics.csproj" />
   <Project Path="Gbar.Sync.Generator/Gbar.Sync.Generator.csproj" />
 </Solution>

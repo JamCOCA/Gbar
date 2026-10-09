@@ -27,6 +27,7 @@
 |---|---|---|---|
 | 50 | `MoveInputSystem` | 玩家输入意图 → 速度（奔跑/蹲伏倍率） | **已实现** |
 | 60 | `MovementSystem` | 运动学积分，唯一位置写入点 | **已实现** |
+| 70 | `PhysicsSystem` | Bepu 物理步进 + 位姿/速度回写 | **已实现** |
 | 100 | `AoiSystem` | 按坐标写 AOI cell 标签 | **已实现** |
 | 120 | `NetSyncSystem` | 快照/增量同步（按 AOI 可见集剪枝） | **已实现** |
 
@@ -78,6 +79,35 @@ public sealed partial class MovementSystem : FixedSystem
 - 单一扁平坐标域，不再区分坐标域，也不涉及冲量/质量/引力
 - `_delta` 为固定步长（1/TickRate），保证模拟确定性
 - 并行安全：每个实体只写自身的 `Position`
+
+### 70 PhysicsSystem（已实现）
+
+**职责**：把带 `PhysicsBody`/`PhysicsStatic` 的实体挂接到 Bepu 刚体，单线程推进物理模拟，再把 Bepu 的位姿/线速度回写到 `Position`/`Rotation`/`Velocity`。跑在 `MovementSystem`（60）之后、`AoiSystem`（100）之前。`Systems/PhysicsSystem.cs:16`。
+
+**实现**：
+
+```csharp
+[SystemOrder(70)]
+public sealed class PhysicsSystem : FixedSystem
+{
+    public override void Initialize();                 // 创建世界地面（静态大盒，顶面 y=0）
+    public override void Update(in float delta)
+    {
+        SyncBodies(physics);      // 新增实体建体、消失实体删体（惰性 + diff）
+        SyncStatics(physics);     // 静态碰撞体同理
+        physics.Step(delta);      // 单线程推进 Bepu
+        WriteBackBodies(physics); // Bepu → Position/Rotation/Velocity
+    }
+}
+```
+
+**关键点**：
+
+- **惰性建体**：`PhysicsBody.Handle` 为 `Null`（-1）时按 `Shape`/`Mass`/`Type` 建体，初始位姿取自 `Position`/`Rotation`（double 位姿 → float 传给 Bepu）
+- **删除回收**：内部 `_trackedBodies`/`_trackedStatics` 记录上一 tick 存活句柄，与当前查询结果集 diff，消失者调用 `RemoveBody`/`RemoveStatic` 回收（不直接监听 Destroy）
+- **回写**：`GetPosition`/`GetOrientation`/`GetLinearVelocity` 读 Bepu → 写回同步组件（`Position` 做 float→double 加宽）；全零 `Rotation` 视为恒等朝向
+- **线程/确定性**：Bepu 单线程内联推进（`ThreadDispatcher(0)`），dt 恒用固定步长
+- `MovementSystem` 已加 `[None<PhysicsBody>]`，物理体不再被运动学积分二次位移
 
 ### 100 AoiSystem（已实现）
 
@@ -199,6 +229,8 @@ public sealed class NetServerSystem : UpdateSystem
 | `NetworkId` / `PlayerTag` / `EntityTypeTag` | `Gbar.Core.Components.Identity` | 标识：NetId / 玩家标记 / 类型标签 |
 | `MoveInput` | `Gbar.Core.Components.Input` | 移动意图（服务器本地，非同步；latest-wins） |
 | `AoiCell` | `Gbar.Core.Components.Spatial` | AOI 网格 cell 坐标（int 格） |
+| `PhysicsBody` | `Gbar.Core.Components.Physics` | 动态/运动学刚体（类型/质量/形状/Bepu 句柄，服务器本地） |
+| `PhysicsStatic` | `Gbar.Core.Components.Physics` | 静态碰撞体（形状/句柄，服务器本地） |
 
 > 可同步组件（`Gbar.Net/Protocol/Components`）带 `[SyncComponent]`，由 `Gbar.Sync.Generator` 源生成器自动产出 ID、`ComponentEntry` 联合、codec 与 `SyncReader` 读取分支；服务器本地组件（Identity/Input/Spatial）不同步。
 
@@ -209,3 +241,5 @@ public sealed class NetServerSystem : UpdateSystem
 | `CreatePlayer(netId)` | NetworkId + PlayerTag + EntityTypeTag + Position + Velocity + Rotation + MoveInput + Health + Cpc + AoiCell | 玩家本体，NetId 由会话分配传入 |
 | `CreateSurfaceWanderer(pos, vel)` | NetworkId + EntityTypeTag + Position + Velocity + Health + Cpc + AoiCell | 地表游荡敏化人（测试运动学移动与增量同步），自动分配 NetId |
 | `CreateStaticEntity(type, pos)` | NetworkId + EntityTypeTag + Position + AoiCell | 静态实体（资源点/建筑，无速度），自动分配 NetId |
+| `CreatePhysicsBody(type, pos, shape, mass)` | NetworkId + EntityTypeTag + Position + Velocity + Rotation + PhysicsBody + AoiCell | 动态刚体（受重力/碰撞，位姿由 PhysicsSystem 回写），自动分配 NetId |
+| `CreateStaticCollider(type, pos, shape)` | NetworkId + EntityTypeTag + Position + PhysicsStatic + AoiCell | 静态碰撞体（仅碰撞阻挡，不参与动力学），自动分配 NetId |

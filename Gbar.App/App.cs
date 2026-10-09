@@ -1,11 +1,13 @@
 using Gbar.App.Logging;
 using Gbar.Core;
+using Gbar.Core.Components.Physics;
 using Gbar.Net.Protocol.Components;
 using Gbar.Core.Logging;
 using Gbar.Core.Persistence.Database;
 using Gbar.Core.Persistence.Users;
 using Gbar.Core.Service;
 using Gbar.Net.Protocol.Entities;
+using Gbar.Physics;
 using Microsoft.Extensions.Configuration;
 
 namespace Gbar.App;
@@ -70,14 +72,14 @@ public sealed class App : IDisposable
     {
         var factory = _server!.EntityFactory!;
 
-        // 占位：游荡敏化人（有速度，测试运动学移动与增量同步）
+        // 占位：游荡敏化人（Kinematic 刚体 + 移动意图，测试物理驱动移动与增量同步）
         factory.CreateSurfaceWanderer(
-            new Position { X = 10.0, Y = 0.0, Z = 20.0 },
-            new Velocity { X = 1.5f, Y = 0.0f, Z = 0.8f });
+            new Position { X = 10.0, Y = 0.95, Z = 20.0 },
+            new MoveIntent { DirX = 0.88f, DirZ = 0.47f, Speed = 1.7f });   // ≈ 原 (1.5, 0.8) 的速度
 
         factory.CreateSurfaceWanderer(
-            new Position { X = -40.0, Y = 0.0, Z = 60.0 },
-            new Velocity { X = 0.0f, Y = 0.0f, Z = -2.0f });
+            new Position { X = -40.0, Y = 0.95, Z = 60.0 },
+            new MoveIntent { DirX = 0.0f, DirZ = -1.0f, Speed = 2.0f });
 
         // 占位：静态资源点（无速度，测试类型区分）
         factory.CreateStaticEntity(EntityType.CpcSpring,
@@ -85,6 +87,20 @@ public sealed class App : IDisposable
 
         factory.CreateStaticEntity(EntityType.ReactorRuin,
             new Position { X = -300.0, Y = -120.0, Z = 80.0 });
+
+        // 物理演示：动态盒/球从空中落到地面（重力 + 碰撞 + 位姿回写同步）
+        factory.CreatePhysicsBody(EntityType.Item,
+            new Position { X = 0.0, Y = 8.0, Z = 0.0 },
+            PhysicsShape.Box(0.5f, 0.5f, 0.5f), 1f);
+
+        factory.CreatePhysicsBody(EntityType.Item,
+            new Position { X = 1.5, Y = 12.0, Z = 1.0 },
+            PhysicsShape.Sphere(0.6f), 1f);
+
+        // 物理演示：地面之上的一块静态平台，供动态体撞击/停靠
+        factory.CreateStaticCollider(EntityType.Structure,
+            new Position { X = 4.0, Y = 3.0, Z = 0.0 },
+            PhysicsShape.Box(2f, 0.25f, 2f));
     }
 
     /// <summary>启动：开启主循环、注册退出信号并启动状态汇报任务。</summary>

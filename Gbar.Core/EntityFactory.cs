@@ -4,10 +4,12 @@ using System.Security.Cryptography.X509Certificates;
 using Arch.Core;
 using Gbar.Core.Components.Identity;
 using Gbar.Core.Components.Input;
+using Gbar.Core.Components.Physics;
 using Gbar.Core.Components.Spatial;
 using Gbar.Core.Net;
 using Gbar.Net.Protocol.Components;
 using Gbar.Net.Protocol.Entities;
+using Gbar.Physics;
 
 namespace Gbar.Core;
 
@@ -28,25 +30,30 @@ public sealed class EntityFactory
         _registry = registry;
     }
 
-    /// <summary>创建玩家实体（PlayerTag + 原点出生 + 零速度）。NetId 由调用方分配并传入（会话需记录该值）。</summary>
+    /// <summary>创建玩家实体（PlayerTag + 出生点 + 零速度，Kinematic 胶囊刚体承载移动）。NetId 由调用方分配并传入（会话需记录该值）。</summary>
     public Entity CreatePlayer(int netId) => _world.Create(
         new NetworkId { Value = netId },
         new PlayerTag(),
         new EntityTypeTag { Value = EntityType.Player },
-        new Position(),
+        new Position { X = 0.0, Y = 0.95, Z = 0.0 },   // 胶囊半高(0.55+0.35)，中心抬到地面之上
         new Velocity(),
         new Rotation(),
         new MoveInput(),
+        new MoveIntent(),
+        new PhysicsBody(PhysicsBodyType.Kinematic, PhysicsShape.Capsule(0.35f, 0.55f)),
         new Health { Current = 100, Max = 100 },
         new Cpc { Current = 50, Max = 50 },
         new AoiCell());
 
-    /// <summary>创建地表游荡敏化人（带速度的运动实体，测试运动学移动与增量同步）。自动分配 NetId。</summary>
-    public Entity CreateSurfaceWanderer(in Position position, in Velocity velocity) => _world.Create(
+    /// <summary>创建地表游荡敏化人（Kinematic 胶囊刚体 + 持续移动意图，测试物理驱动移动与增量同步）。自动分配 NetId。</summary>
+    public Entity CreateSurfaceWanderer(in Position position, in MoveIntent intent) => _world.Create(
         new NetworkId { Value = _registry.AllocNetId() },
         new EntityTypeTag { Value = EntityType.SurfaceWanderer },
         position,
-        velocity,
+        new Velocity(),
+        new Rotation(),
+        intent,
+        new PhysicsBody(PhysicsBodyType.Kinematic, PhysicsShape.Capsule(0.35f, 0.55f)),
         new Health { Current = 80, Max = 80 },
         new Cpc { Current = 30, Max = 30 },
         new AoiCell());
@@ -56,5 +63,23 @@ public sealed class EntityFactory
         new NetworkId { Value = _registry.AllocNetId() },
         new EntityTypeTag { Value = type },
         position,
+        new AoiCell());
+
+    /// <summary>创建物理刚体实体（动态体，受重力/碰撞，位姿由 PhysicsSystem 回写同步）。自动分配 NetId。</summary>
+    public Entity CreatePhysicsBody(EntityType type, in Position position, in PhysicsShape shape, float mass = 1f) => _world.Create(
+        new NetworkId { Value = _registry.AllocNetId() },
+        new EntityTypeTag { Value = type },
+        position,
+        new Velocity(),
+        new Rotation(),
+        new PhysicsBody(PhysicsBodyType.Dynamic, shape, mass),
+        new AoiCell());
+
+    /// <summary>创建静态碰撞体实体（不参与动力学，仅作碰撞阻挡，如建筑/地形）。自动分配 NetId。</summary>
+    public Entity CreateStaticCollider(EntityType type, in Position position, in PhysicsShape shape) => _world.Create(
+        new NetworkId { Value = _registry.AllocNetId() },
+        new EntityTypeTag { Value = type },
+        position,
+        new PhysicsStatic(shape),
         new AoiCell());
 }

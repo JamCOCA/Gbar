@@ -1,8 +1,11 @@
 using System.Linq.Expressions;
+using System.Numerics;
 using Arch.Core;
 using Arch.System;
 using Gbar.Core.Net;
+using Gbar.Core.Physics;
 using Gbar.Core.Service;
+using Gbar.Physics;
 using Schedulers;
 
 namespace Gbar.Core;
@@ -16,6 +19,7 @@ public sealed class GameServer : IDisposable
 {
     # region 成员
     private readonly World _world;
+    private readonly PhysicsWorld _physics;                  // Bepu 物理世界（默认重力向下 10 m/s²，单线程确定性）
     private readonly UpdateSystemGroup _updateSystems;        // 变步长更新（delta 为实际流逝时间）
     private readonly FixedUpdateSystemGroup _fixedSystems;    // 定步长更新（delta 固定为 1/TickRate）
     private CancellationTokenSource? _cts;          // 控制主循环的取消令牌
@@ -23,6 +27,12 @@ public sealed class GameServer : IDisposable
 
     /// <summary>ECS 世界，所有实体与组件都存放在这里。</summary>
     public World World => _world;
+
+    /// <summary>Bepu 物理世界，由 <see cref="Systems.PhysicsSystem"/> 驱动；随本实例释放。</summary>
+    public PhysicsWorld Physics => _physics;
+
+    /// <summary>物理体双向注册表（Entity ↔ 句柄），由 <see cref="Systems.PhysicsSystem"/> 维护，供碰撞判定与查询。</summary>
+    public PhysicsBodyRegistry PhysicsRegistry { get; } = new();
 
     /// <summary>每秒逻辑帧数。</summary>
     public int TickRate { get; }
@@ -71,6 +81,7 @@ public sealed class GameServer : IDisposable
         TickRate = tickRate;
         KeyframeIntervalTicks = tickRate * 10;
         _world = World.Create();
+        _physics = new PhysicsWorld(new Vector3(0f, -10f, 0f));
         _updateSystems = new UpdateSystemGroup();
         _fixedSystems = new FixedUpdateSystemGroup();
     }
@@ -221,6 +232,7 @@ public sealed class GameServer : IDisposable
         NetServer?.Dispose();
         _updateSystems.Dispose();   // 组 Dispose 会连带释放其 Commands
         _fixedSystems.Dispose();
+        _physics.Dispose();
         World.Destroy(_world);
     }
 }

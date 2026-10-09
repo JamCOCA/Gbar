@@ -15,7 +15,8 @@ Gbar/
 │   ├── Components/                   服务器本地组件（一组件一文件，按功能分二级目录；不同步）
 │   │   ├── Identity/                 标识：NetworkId、PlayerTag、EntityTypeTag
 │   │   ├── Input/                    输入：MoveInput（移动意图，latest-wins）
-│   │   └── Spatial/                  空间：AoiCell（AOI 网格 cell）
+│   │   ├── Spatial/                  空间：AoiCell（AOI 网格 cell）
+│   │   └── Physics/                  物理：PhysicsBody / PhysicsStatic（服务器本地，挂接 Bepu 刚体）
 │   ├── Logging/                      日志：Log + ISink + FileSink/LevelFilterSink
 │   ├── Net/                          网络传输（依赖 ECS，留在 Core）
 │   │   ├── ClientRegistry.cs         连接会话 + NetId 分配（仅主循环线程访问）
@@ -29,6 +30,7 @@ Gbar/
 │       ├── NetServerSystem.cs        收包/握手/玩家生命周期（变步长 Order 0）
 │       ├── MoveInputSystem.cs        玩家输入 → 速度（定步长 Order 50）
 │       ├── MovementSystem.cs         运动学积分，唯一位置写入点（定步长 Order 60）
+│       ├── PhysicsSystem.cs          Bepu 物理步进 + 位姿/速度回写（定步长 Order 70）
 │       ├── AoiSystem.cs              按坐标写 AOI cell 标签（定步长 Order 100）
 │       └── NetSyncSystem.cs          快照/增量同步（定步长 Order 120）
 │
@@ -52,6 +54,16 @@ Gbar/
 │       │   ├── PacketCompressor.cs   压缩器接口 + 默认不压缩实现
 │       │   └── FragmentAssembler.cs  分片重组器（按 MessageId 顺序累积）
 │       └── README.md                 协议说明（封包格式 / 新增包 / 新增可复制组件）
+│
+├── Gbar.Physics/                     BepuPhysics v2 封装层（只依赖 BepuPhysics，不依赖 Gbar.Core）
+│   ├── PhysicsWorld.cs               持有 Simulation/BufferPool/ThreadDispatcher，建体/步进/位姿读写/释放
+│   ├── Types/                        对外公开的物理类型（均位于 Gbar.Physics 命名空间）
+│   │   ├── PhysicsEnums.cs           刚体类型/形状类型枚举
+│   │   ├── PhysicsShape.cs           碰撞形状描述（tagged union 字段 + 静态工厂）
+│   │   └── PhysicsHandles.cs         句柄封装（PhysicsBodyHandle / PhysicsStaticHandle）
+│   └── Internal/                     Bepu 回调封装（不对外暴露）
+│       ├── PoseIntegratorCallbacks.cs    重力积分回调
+│       └── NarrowPhaseCallbacks.cs       碰撞规则回调
 │
 ├── Gbar.App/                         启动入口：创建服务器、注册系统、接线
 │   ├── Program.cs                    入口（new App → Init → Debug → Start → Quit）
