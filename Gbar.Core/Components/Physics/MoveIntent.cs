@@ -2,7 +2,7 @@ namespace Gbar.Core.Components.Physics;
 
 /// <summary>
 /// 持续移动意图组件（服务器本地，非同步）：期望的水平移动方向与目标速度，
-/// 由 <see cref="Systems.PhysicsSystem"/> 每 tick 翻译成刚体线速度（仅对 Kinematic 体生效，Dynamic 体由力/冲量驱动）。
+/// 由 <see cref="Systems.PhysicsSystem"/> 每 tick 翻译成刚体线速度（Dynamic/Kinematic 均适用：水平速度直接设置，垂直速度留给重力/跳跃）。
 /// 语义是"每 tick 都有效"的状态型意图，直到组件被移除；与之相对的一次性命令见 <see cref="ApplyImpulse"/>/<see cref="TeleportRequest"/>。
 /// 业务系统只写本组件，不直接触碰 <see cref="PhysicsBody.Handle"/> 或物理世界。
 /// </summary>

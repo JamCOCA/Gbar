@@ -28,3 +28,24 @@ public enum PhysicsShapeType
     /// <summary>三角网格（任意复杂度的静态几何；开销大，动态体慎用）。</summary>
     Mesh,
 }
+
+/// <summary>
+/// 按轴旋转锁定（<see cref="PhysicsWorld.CreateBody"/> 的 Dynamic 专用）：
+/// 被锁轴的逆惯量对角分量置零（转动惯量视为无穷大），碰撞/冲量不会使刚体绕该轴旋转。
+/// 用法同 Unity Rigidbody 的 Freeze Rotation XYZ；角色通常锁 <see cref="X"/>|<see cref="Z"/> 只留 Y 转向。
+/// </summary>
+[Flags]
+public enum RotationLock
+{
+    /// <summary>不锁定：三轴均可自由旋转。</summary>
+    None = 0,
+
+    /// <summary>锁定绕局部 X 轴旋转（前后俯仰）。</summary>
+    X = 1,
+
+    /// <summary>锁定绕局部 Y 轴旋转（左右转向）。</summary>
+    Y = 2,
+
+    /// <summary>锁定绕局部 Z 轴旋转（左右侧倾）。</summary>
+    Z = 4,
+}

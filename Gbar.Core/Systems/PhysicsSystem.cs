@@ -11,7 +11,7 @@ namespace Gbar.Core.Systems;
 /// 物理系统（定步长，Order 70，跑在 MoveInputSystem 之后、AoiSystem 之前）：
 /// ECS 世界与物理世界（Gbar.Physics）之间的唯一通道。单线程分五阶段执行：
 /// 1. SyncBodies/SyncStatics：按查询结果集 diff 惰性建体/删体（不直接 Create/Destroy ECS 实体）；
-/// 2. ApplyMoveIntents：把 <see cref="MoveIntent"/> 翻译成 Kinematic 刚体的线速度（保留垂直速度）；
+/// 2. ApplyMoveIntents：把 <see cref="MoveIntent"/> 翻译成刚体线速度（Dynamic/Kinematic 均适用，保留垂直速度）；
 /// 3. ApplyCommands：消费一次性命令（<see cref="ApplyImpulse"/>/<see cref="TeleportRequest"/>），经命令缓冲移除组件；
 /// 4. Step：推进 Bepu 模拟；
 /// 5. WriteBackBodies：把 Bepu 位姿/速度回写到 Position/Rotation/Velocity（float→double 加宽）。
@@ -57,7 +57,7 @@ public sealed class PhysicsSystem : FixedSystem
         WriteBackBodies(physics);
     }
 
-    /// <summary>应用持续移动意图：仅对 Kinematic 刚体生效（Dynamic 体由力/冲量驱动，忽略意图）；水平速度按意图缩放，垂直速度保留给跳跃/重力。</summary>
+    /// <summary>应用持续移动意图（Dynamic/Kinematic 均适用）：水平速度按意图设置，垂直速度保留给重力/跳跃。</summary>
     private void ApplyMoveIntents(PhysicsWorld physics)
     {
         var world = Server.World;
@@ -68,7 +68,7 @@ public sealed class PhysicsSystem : FixedSystem
         foreach (var e in entities)
         {
             var body = world.Get<PhysicsBody>(e);
-            if (body.Handle.IsNull || body.Type != PhysicsBodyType.Kinematic) continue;
+            if (body.Handle.IsNull) continue;
 
             var intent = world.Get<MoveIntent>(e);
             var velocity = physics.GetLinearVelocity(body.Handle);
@@ -130,7 +130,8 @@ public sealed class PhysicsSystem : FixedSystem
                     new Vector3((float)position.X, (float)position.Y, (float)position.Z),
                     ToQuaternion(rotation),
                     body.Mass,
-                    body.Type);
+                    body.Type,
+                    body.RotationLock);
                 world.Set(e, body);
                 Server.PhysicsRegistry.RegisterBody(e, body.Handle);
             }

@@ -30,7 +30,7 @@ public sealed class EntityFactory
         _registry = registry;
     }
 
-    /// <summary>创建玩家实体（PlayerTag + 出生点 + 零速度，Kinematic 胶囊刚体承载移动）。NetId 由调用方分配并传入（会话需记录该值）。</summary>
+    /// <summary>创建玩家实体（PlayerTag + 出生点 + 零速度，Dynamic 胶囊刚体：受重力/碰撞/击退，锁 X/Z 旋转只留 Y 转向）。NetId 由调用方分配并传入（会话需记录该值）。</summary>
     public Entity CreatePlayer(int netId) => _world.Create(
         new NetworkId { Value = netId },
         new PlayerTag(),
@@ -40,7 +40,7 @@ public sealed class EntityFactory
         new Rotation(),
         new MoveInput(),
         new MoveIntent(),
-        new PhysicsBody(PhysicsBodyType.Kinematic, PhysicsShape.Capsule(0.35f, 0.55f)),
+        new PhysicsBody(PhysicsBodyType.Dynamic, PhysicsShape.Capsule(0.35f, 0.55f), mass: 75f, rotationLock: RotationLock.X | RotationLock.Z),
         new Health { Current = 100, Max = 100 },
         new Cpc { Current = 50, Max = 50 },
         new AoiCell());

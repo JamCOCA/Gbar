@@ -19,14 +19,18 @@ public struct PhysicsBody
     /// <summary>碰撞形状（盒/球/胶囊/网格）。</summary>
     public PhysicsShape Shape;
 
+    /// <summary>旋转锁定（按轴，Dynamic 专用）：被锁轴的逆惯量对角分量置零，碰撞/冲量不会使其绕该轴旋转。角色通常锁 X|Z 只留 Y 转向。</summary>
+    public RotationLock RotationLock;
+
     /// <summary>Bepu 刚体句柄；<see cref="PhysicsBodyHandle.Null"/> 表示尚未建体，由 PhysicsSystem 惰性创建。</summary>
     public PhysicsBodyHandle Handle;
 
-    public PhysicsBody(PhysicsBodyType type, in PhysicsShape shape, float mass = 1f)
+    public PhysicsBody(PhysicsBodyType type, in PhysicsShape shape, float mass = 1f, RotationLock rotationLock = RotationLock.None)
     {
         Type = type;
         Shape = shape;
         Mass = mass;
+        RotationLock = rotationLock;
         Handle = PhysicsBodyHandle.Null;
     }
 }

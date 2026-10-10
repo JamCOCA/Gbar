@@ -229,7 +229,7 @@ public sealed class NetServerSystem : UpdateSystem
 | `NetworkId` / `PlayerTag` / `EntityTypeTag` | `Gbar.Core.Components.Identity` | 标识：NetId / 玩家标记 / 类型标签 |
 | `MoveInput` | `Gbar.Core.Components.Input` | 移动意图（服务器本地，非同步；latest-wins） |
 | `AoiCell` | `Gbar.Core.Components.Spatial` | AOI 网格 cell 坐标（int 格） |
-| `PhysicsBody` | `Gbar.Core.Components.Physics` | 动态/运动学刚体（类型/质量/形状/Bepu 句柄，服务器本地） |
+| `PhysicsBody` | `Gbar.Core.Components.Physics` | 动态/运动学刚体（类型/质量/形状/锁旋转/Bepu 句柄，服务器本地） |
 | `PhysicsStatic` | `Gbar.Core.Components.Physics` | 静态碰撞体（形状/句柄，服务器本地） |
 
 > 可同步组件（`Gbar.Net/Protocol/Components`）带 `[SyncComponent]`，由 `Gbar.Sync.Generator` 源生成器自动产出 ID、`ComponentEntry` 联合、codec 与 `SyncReader` 读取分支；服务器本地组件（Identity/Input/Spatial）不同步。

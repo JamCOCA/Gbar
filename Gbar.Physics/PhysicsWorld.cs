@@ -18,6 +18,7 @@ public sealed class PhysicsWorld : IDisposable
 {
     private readonly BufferPool _pool;
     private readonly ThreadDispatcher? _dispatcher;
+    private readonly ShapeManager _shapes;
     private bool _disposed;
 
     /// <summary>底层物理模拟，调用方不直接持有，统一经本封装访问。</summary>
@@ -34,20 +35,26 @@ public sealed class PhysicsWorld : IDisposable
             new NarrowPhaseCallbacks(new SpringSettings(30, 1)),
             new PoseIntegratorCallbacks(gravity),
             new SolveDescription(8, 1));
+
+        _shapes = new ShapeManager(_pool, Simulation);
     }
 
     /// <summary>按固定步长推进一次模拟（dt 必须恒定，保证确定性）。</summary>
     public void Step(float dt) => Simulation.Timestep(dt, _dispatcher);
 
     /// <summary>创建动态/运动学刚体（盒/球/胶囊），返回句柄。Static 请用 <see cref="CreateStatic"/>。</summary>
-    public PhysicsBodyHandle CreateBody(in PhysicsShape shape, in Vector3 position, in Quaternion orientation, float mass, PhysicsBodyType type)
+    /// <param name="rotationLock">仅对 Dynamic 有效：被锁轴的逆惯量对角分量置零（转动惯量视为无穷大），碰撞/冲量不会使其绕该轴旋转。</param>
+    public PhysicsBodyHandle CreateBody(in PhysicsShape shape, in Vector3 position, in Quaternion orientation, float mass, PhysicsBodyType type, RotationLock rotationLock = RotationLock.None)
     {
         var pose = new RigidPose(position, orientation);
 
-        TypedIndex shapeIndex = AddShape(in shape);
+        TypedIndex shapeIndex = _shapes.Register(in shape);
         // 只有动态体需要惯量；运动学体质量视为无穷大，惯量字段被 Bepu 忽略。
         // Mesh 不提供解析惯量（且定位是静态几何），动态 Mesh 不受支持。
-        BodyInertia inertia = type == PhysicsBodyType.Dynamic ? ComputeInertia(in shape, mass) : default;
+        BodyInertia inertia = type == PhysicsBodyType.Dynamic ? ShapeManager.ComputeInertia(in shape, mass) : default;
+        if (rotationLock.HasFlag(RotationLock.X)) inertia.InverseInertiaTensor.XX = 0f;   // 零逆惯量 = 无穷大转动惯量 → 该轴不旋转
+        if (rotationLock.HasFlag(RotationLock.Y)) inertia.InverseInertiaTensor.YY = 0f;
+        if (rotationLock.HasFlag(RotationLock.Z)) inertia.InverseInertiaTensor.ZZ = 0f;
 
         var collidable = new CollidableDescription(shapeIndex, 0.1f);
         var activity = new BodyActivityDescription(0.01f);
@@ -65,7 +72,7 @@ public sealed class PhysicsWorld : IDisposable
     /// <summary>创建静态碰撞体（盒/球/胶囊/网格），返回句柄。静态体不参与动力学，仅作碰撞阻挡。Mesh 主要面向静态场景几何。</summary>
     public PhysicsStaticHandle CreateStatic(in PhysicsShape shape, in Vector3 position, in Quaternion orientation)
     {
-        var description = new StaticDescription(new RigidPose(position, orientation), AddShape(shape));
+        var description = new StaticDescription(new RigidPose(position, orientation), _shapes.Register(shape));
         var handle = Simulation.Statics.Add(description);
         return new PhysicsStaticHandle(handle.Value);
     }
@@ -92,10 +99,11 @@ public sealed class PhysicsWorld : IDisposable
         Simulation.Awakener.AwakenBody(new BodyHandle { Value = handle.Value });
     }
 
-    /// <summary>对刚体施加瞬时线冲量（用于爆炸、击退等）。</summary>
+    /// <summary>对刚体施加瞬时线冲量（用于爆炸、击退等）。Bepu 的 ApplyLinearImpulse 不自动唤醒休眠体，需手动唤醒，否则冲量延迟到下次唤醒才生效。</summary>
     public void ApplyLinearImpulse(PhysicsBodyHandle handle, in Vector3 impulse)
     {
         GetBody(handle).ApplyLinearImpulse(in impulse);
+        Simulation.Awakener.AwakenBody(new BodyHandle { Value = handle.Value });
     }
 
     /// <summary>瞬移刚体到指定位置（传送/重生）：直接改写位姿并唤醒，不经过碰撞推挤。</summary>
@@ -106,50 +114,6 @@ public sealed class PhysicsWorld : IDisposable
     }
 
     private BodyReference GetBody(PhysicsBodyHandle handle) => Simulation.Bodies.GetBodyReference(new BodyHandle { Value = handle.Value });
-
-    /// <summary>
-    /// 构建 Bepu Mesh：把调用方给的顶点/索引按三角形拷贝进 <see cref="BufferPool"/>，
-    /// 返回的 Mesh 由 <see cref="Simulation.Shapes"/> 持有、三角形缓冲由本类持有的 <see cref="BufferPool"/> 供养（Dispose 时统一回收）。
-    /// </summary>
-    private Mesh CreateMesh(in PhysicsShape shape)
-    {
-        if (shape.MeshVertices is not { Length: > 0 } vertices)
-            throw new ArgumentException("Mesh 形状缺少顶点数据（MeshVertices 为空或长度为 0）。");
-        if (shape.MeshIndices is not { Length: > 0 } indices)
-            throw new ArgumentException("Mesh 形状缺少索引数据（MeshIndices 为空或长度为 0）。");
-        if (indices.Length % 3 != 0)
-            throw new ArgumentException($"Mesh 索引长度必须是 3 的倍数（每 3 个一组一个三角形），实际 {indices.Length}。");
-
-        int triangleCount = indices.Length / 3;
-        _pool.Take(triangleCount, out Buffer<Triangle> triangles);
-        for (int i = 0; i < triangleCount; i++)
-        {
-            triangles[i] = new Triangle(
-                vertices[indices[i * 3]],
-                vertices[indices[i * 3 + 1]],
-                vertices[indices[i * 3 + 2]]);
-        }
-        return new Mesh(triangles, Vector3.One, _pool);
-    }
-
-    private TypedIndex AddShape(in PhysicsShape shape) => shape.Type switch
-    {
-        PhysicsShapeType.Box => Simulation.Shapes.Add(new Box(shape.HalfExtents.X * 2f, shape.HalfExtents.Y * 2f, shape.HalfExtents.Z * 2f)),
-        PhysicsShapeType.Sphere => Simulation.Shapes.Add(new Sphere(shape.Radius)),
-        PhysicsShapeType.Capsule => Simulation.Shapes.Add(new Capsule(shape.Radius, shape.HalfLength)),
-        PhysicsShapeType.Mesh => Simulation.Shapes.Add(CreateMesh(in shape)),
-        _ => throw new ArgumentOutOfRangeException(nameof(shape), shape.Type, "不支持的形状类型。"),
-    };
-
-    private static BodyInertia ComputeInertia(in PhysicsShape shape, float mass) => shape.Type switch
-    {
-        PhysicsShapeType.Box => new Box(shape.HalfExtents.X * 2f, shape.HalfExtents.Y * 2f, shape.HalfExtents.Z * 2f).ComputeInertia(mass),
-        PhysicsShapeType.Sphere => new Sphere(shape.Radius).ComputeInertia(mass),
-        PhysicsShapeType.Capsule => new Capsule(shape.Radius, shape.HalfLength).ComputeInertia(mass),
-        // Mesh 无解析惯量，动态 Mesh 不受支持；请改用 CreateStatic 或盒/球/胶囊近似。
-        PhysicsShapeType.Mesh => throw new NotSupportedException("动态 Mesh 刚体不受支持（Bepu Mesh 不提供解析惯量）；请使用 CreateStatic，或改用盒/球/胶囊形状。"),
-        _ => throw new ArgumentOutOfRangeException(nameof(shape), shape.Type, "不支持的形状类型。"),
-    };
 
     public void Dispose()
     {
